@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор документов - Шаблоны</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="logo">
+                <i class="fas fa-file-contract"></i>
+                <span>ДокументГен</span>
+            </a>
+            <div class="nav-links">
+                <a href="/"><i class="fas fa-home"></i> Главная</a>
+                <a href="/templates" class="active"><i class="fas fa-file-alt"></i> Шаблоны</a>
+                <a href="#" onclick="showStats()"><i class="fas fa-chart-bar"></i> Статистика</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="page-header">
+            <h1><i class="fas fa-file-alt"></i> Шаблоны документов</h1>
+            <p class="subtitle">Выберите шаблон для заполнения</p>
+        </div>
+
+        <div class="filters">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Поиск по названию..." onkeyup="searchTemplates()">
+                <i class="fas fa-search"></i>
+            </div>
+            <div class="filter-options">
+                <select id="categoryFilter" onchange="filterTemplates()">
+                    <option value="">Все категории</option>
+                    <!-- Категории загрузятся через JS -->
+                </select>
+                <select id="typeFilter" onchange="filterTemplates()">
+                    <option value="">Все типы</option>
+                    <option value="Договор">Договоры</option>
+                    <option value="Заявление">Заявления</option>
+                    <option value="Исковое заявление">Исковые заявления</option>
+                    <option value="Приказ">Приказы</option>
+                    <option value="Доверенность">Доверенности</option>
+                    <option value="Акт">Акты</option>
+                    <option value="Прочее">Прочее</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="templates-container">
+            <div class="categories-sidebar" id="categoriesSidebar">
+                <!-- Категории загрузятся через JS -->
+            </div>
+            
+            <div class="templates-main">
+                <div id="loading" class="loading">
+                    <i class="fas fa-spinner fa-spin"></i> Загрузка шаблонов...
+                </div>
+                <div class="templates-grid" id="templatesGrid">
+                    <!-- Шаблоны загрузятся через JavaScript -->
+                </div>
+                <div id="noTemplates" class="no-results" style="display: none;">
+                    <i class="fas fa-file-excel"></i>
+                    <h3>Шаблоны не найдены</h3>
+                    <p>Попробуйте изменить параметры поиска</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container">
+            <p>© 2024 Генератор документов. Все права защищены.</p>
+        </div>
+    </footer>
+
+    <script src="/static/script.js"></script>
+    <script>
+        let allTemplates = [];
+        let allCategories = [];
+
+        document.addEventListener('DOMContentLoaded', function() {
+            loadCategories();
+            loadTemplates();
+        });
+
+        function loadCategories() {
+            fetch('/api/categories')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        allCategories = data.categories;
+                        
+                        // Заполняем фильтр категорий
+                        const categoryFilter = document.getElementById('categoryFilter');
+                        data.categories.forEach(category => {
+                            const option = document.createElement('option');
+                            option.value = category.id;
+                            option.textContent = category.name;
+                            categoryFilter.appendChild(option);
+                        });
+                        
+                        // Заполняем боковую панель категорий
+                        const categoriesSidebar = document.getElementById('categoriesSidebar');
+                        categoriesSidebar.innerHTML = `
+                            <h3><i class="fas fa-folder"></i> Категории</h3>
+                            <div class="category-list">
+                                ${data.categories.map(category => `
+                                    <div class="category-item" onclick="filterByCategory(${category.id})">
+                                        <span class="category-name">${category.name}</span>
+                                        <span class="category-count">${category.template_count}</span>
+                                    </div>
+                                `).join('')}
+                                <div class="category-item" onclick="filterByCategory('')">
+                                    <span class="category-name">Все категории</span>
+                                    <span class="category-count">${allTemplates.length}</span>
+                                </div>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => console.error('Ошибка загрузки категорий:', error));
+        }
+
+        function loadTemplates() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('templatesGrid').innerHTML = '';
+            document.getElementById('noTemplates').style.display = 'none';
+            
+            fetch('/api/templates')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+                    
+                    if (data.success) {
+                        allTemplates = data.templates;
+                        displayTemplates(allTemplates);
+                    } else {
+                        showNoTemplates();
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки шаблонов:', error);
+                    document.getElementById('loading').style.display = 'none';
+                    showNoTemplates();
+                });
+        }
+
+        function displayTemplates(templates) {
+            const templatesGrid = document.getElementById('templatesGrid');
+            
+            if (templates.length === 0) {
+                showNoTemplates();
+                return;
+            }
+            
+            templatesGrid.innerHTML = templates.map(template => `
+                <div class="template-card">
+                    <div class="template-icon">
+                        <i class="fas fa-file-contract"></i>
+                    </div>
+                    <div class="template-content">
+                        <h3>${template.name}</h3>
+                        <p class="template-category">${template.category || 'Без категории'}</p>
+                        <p class="template-desc">${template.description || 'Без описания'}</p>
+                        <div class="template-meta">
+                            <span class="template-type">${template.type || 'Не указан'}</span>
+                            <span class="template-popularity"><i class="fas fa-eye"></i> ${template.popularity}</span>
+                        </div>
+                        <div class="template-actions">
+                            <a href="/document/${template.id}" class="btn btn-primary">
+                                <i class="fas fa-pen"></i> Заполнить
+                            </a>
+                            <button class="btn btn-secondary" onclick="viewTemplateDetails(${template.id})">
+                                <i class="fas fa-info-circle"></i> Подробнее
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            
+            document.getElementById('noTemplates').style.display = 'none';
+        }
+
+        function filterTemplates() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const categoryId = document.getElementById('categoryFilter').value;
+            const typeFilter = document.getElementById('typeFilter').value;
+            
+            let filtered = allTemplates;
+            
+            // Поиск по тексту
+            if (searchTerm) {
+                filtered = filtered.filter(template => 
+                    template.name.toLowerCase().includes(searchTerm) ||
+                    (template.description && template.description.toLowerCase().includes(searchTerm))
+                );
+            }
+            
+            // Фильтр по категории
+            if (categoryId) {
+                const category = allCategories.find(cat => cat.id == categoryId);
+                if (category) {
+                    filtered = filtered.filter(template => template.category === category.name);
+                }
+            }
+            
+            // Фильтр по типу
+            if (typeFilter) {
+                filtered = filtered.filter(template => template.type === typeFilter);
+            }
+            
+            displayTemplates(filtered);
+        }
+
+        function searchTemplates() {
+            filterTemplates();
+        }
+
+        function filterByCategory(categoryId) {
+            document.getElementById('categoryFilter').value = categoryId;
+            filterTemplates();
+        }
+
+        function viewTemplateDetails(templateId) {
+            fetch(`/api/templates/${templateId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const template = data.template;
+                        alert(`Детали шаблона:\n\nНазвание: ${template.name}\nТип: ${template.type}\nКатегория: ${template.category}\nКол-во слов: ${template.word_count}\nПопулярность: ${template.popularity}\n\nДля заполнения документа нажмите "Заполнить" на карточке шаблона.`);
+                    }
+                })
+                .catch(error => {
+                    alert('Ошибка загрузки деталей шаблона');
+                });
+        }
+
+        function showNoTemplates() {
+            document.getElementById('templatesGrid').innerHTML = '';
+            document.getElementById('noTemplates').style.display = 'block';
+        }
+
+        function showStats() {
+            alert('Откройте консоль разработчика (F12) и перейдите на вкладку Network для просмотра запросов к API');
+        }
+    </script>
+</body>
+</html>
