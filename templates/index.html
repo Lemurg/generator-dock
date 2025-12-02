@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор документов - Главная</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="logo">
+                <i class="fas fa-file-contract"></i>
+                <span>ДокументГен</span>
+            </a>
+            <div class="nav-links">
+                <a href="/" class="active"><i class="fas fa-home"></i> Главная</a>
+                <a href="/templates"><i class="fas fa-file-alt"></i> Шаблоны</a>
+                <a href="#" onclick="showStats()"><i class="fas fa-chart-bar"></i> Статистика</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header class="hero">
+            <h1><i class="fas fa-magic"></i> Генератор документов</h1>
+            <p class="subtitle">Создавайте юридические документы за минуты, а не часы</p>
+            <a href="/templates" class="btn btn-primary">
+                <i class="fas fa-play-circle"></i> Начать работу
+            </a>
+        </header>
+
+        <div class="stats-overview" id="statsOverview">
+            <h2><i class="fas fa-chart-line"></i> Загрузка статистики...</h2>
+        </div>
+
+        <div class="features">
+            <h2><i class="fas fa-star"></i> Почему выбирают нас?</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-bolt"></i>
+                    </div>
+                    <h3>Быстро</h3>
+                    <p>Создавайте документы за считанные минуты вместо часов ручного заполнения</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <h3>Надежно</h3>
+                    <p>Все документы составлены профессиональными юристами и соответствуют законодательству</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-edit"></i>
+                    </div>
+                    <h3>Просто</h3>
+                    <p>Интуитивно понятный интерфейс, не требующий специальных знаний</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-infinity"></i>
+                    </div>
+                    <h3>Бесплатно</h3>
+                    <p>Полностью бесплатный сервис без скрытых платежей и ограничений</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="templates-preview">
+            <h2><i class="fas fa-file-alt"></i> Популярные шаблоны</h2>
+            <div class="templates-grid" id="popularTemplates">
+                <!-- Загрузится через JavaScript -->
+            </div>
+            <div class="text-center">
+                <a href="/templates" class="btn btn-secondary">
+                    <i class="fas fa-search"></i> Все шаблоны
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container">
+            <p>© 2024 Генератор документов. Все права защищены.</p>
+            <p class="footer-links">
+                <a href="#" onclick="seedDatabase()"><i class="fas fa-database"></i> Заполнить БД</a>
+                <a href="/api/statistics" target="_blank"><i class="fas fa-chart-bar"></i> API Статистика</a>
+            </p>
+        </div>
+    </footer>
+
+    <script src="/static/script.js"></script>
+    <script>
+        // Загружаем статистику и популярные шаблоны
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStatistics();
+            loadPopularTemplates();
+        });
+
+        function loadStatistics() {
+            fetch('/api/statistics')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const stats = data.statistics;
+                        document.getElementById('statsOverview').innerHTML = `
+                            <h2><i class="fas fa-chart-line"></i> Статистика системы</h2>
+                            <div class="stats-grid">
+                                <div class="stat-card">
+                                    <h3>${stats.total_templates}</h3>
+                                    <p>Доступных шаблонов</p>
+                                </div>
+                                <div class="stat-card">
+                                    <h3>${stats.total_documents}</h3>
+                                    <p>Создано документов</p>
+                                </div>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки статистики:', error);
+                    document.getElementById('statsOverview').innerHTML = `
+                        <h2><i class="fas fa-chart-line"></i> Статистика системы</h2>
+                        <p class="error">Не удалось загрузить статистику</p>
+                    `;
+                });
+        }
+
+        function loadPopularTemplates() {
+            fetch('/api/templates?per_page=3')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.templates.length > 0) {
+                        const templatesGrid = document.getElementById('popularTemplates');
+                        templatesGrid.innerHTML = data.templates.map(template => `
+                            <div class="template-card">
+                                <div class="template-icon">
+                                    <i class="fas fa-file-contract"></i>
+                                </div>
+                                <h3>${template.name}</h3>
+                                <p class="template-category">${template.category || 'Без категории'}</p>
+                                <p class="template-desc">${template.description || 'Без описания'}</p>
+                                <div class="template-stats">
+                                    <span><i class="fas fa-eye"></i> ${template.popularity}</span>
+                                    <span><i class="fas fa-font"></i> ${template.word_count ? (template.word_count/1000).toFixed(1)+'k' : 'N/A'}</span>
+                                </div>
+                                <a href="/document/${template.id}" class="btn btn-small">
+                                    <i class="fas fa-pen"></i> Заполнить
+                                </a>
+                            </div>
+                        `).join('');
+                    } else {
+                        document.getElementById('popularTemplates').innerHTML = `
+                            <div class="no-templates">
+                                <p>Шаблоны не найдены. Заполните базу данных.</p>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки шаблонов:', error);
+                    document.getElementById('popularTemplates').innerHTML = `
+                        <div class="no-templates">
+                            <p>Ошибка загрузки шаблонов</p>
+                        </div>
+                    `;
+                });
+        }
+
+        function seedDatabase() {
+            if (confirm('Заполнить базу данных начальными данными? Существующие данные будут удалены.')) {
+                fetch('/api/admin/seed', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert('База данных успешно заполнена!');
+                            location.reload();
+                        } else {
+                            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                        }
+                    })
+                    .catch(error => {
+                        alert('Ошибка при заполнении БД: ' + error);
+                    });
+            }
+        }
+
+        function showStats() {
+            alert('Откройте консоль разработчика (F12) и перейдите на вкладку Network для просмотра запросов к API');
+        }
+    </script>
+</body>
+</html>
