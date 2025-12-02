@@ -17,6 +17,7 @@
             <div class="nav-links">
                 <a href="/"><i class="fas fa-home"></i> Главная</a>
                 <a href="/templates"><i class="fas fa-file-alt"></i> Шаблоны</a>
+                <a href="/documents"><i class="fas fa-folder-open"></i> Мои документы</a>
                 <a href="#" onclick="goBack()"><i class="fas fa-arrow-left"></i> Назад</a>
             </div>
         </div>
@@ -55,6 +56,11 @@
                 <h3><i class="fas fa-eye"></i> Предварительный просмотр</h3>
                 <div class="preview-content" id="previewContent">
                     <p>Заполните поля формы для просмотра данных</p>
+                </div>
+                <div class="form-group">
+                    <label for="document_name">Название документа:</label>
+                    <input type="text" id="document_name" class="form-control" 
+                        placeholder="Например: Договор аренды от 15.12.2024">
                 </div>
                 <div class="preview-info">
                     <p><i class="fas fa-info-circle"></i> Все обязательные поля отмечены звездочкой (*)</p>

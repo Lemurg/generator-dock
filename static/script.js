@@ -167,6 +167,37 @@ function loadFromLocalStorage(key) {
     }
 }
 
+function generateDocument() {
+    const form = document.getElementById('documentForm');
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+    
+    const documentName = document.getElementById('document_name').value;
+    const formData = {};
+    templateFields.forEach(field => {
+        const input = document.getElementById(field.key) || 
+                     document.querySelector(`[name="${field.key}"]`);
+        
+        if (input) {
+            if (field.type === 'checkbox') {
+                formData[field.key] = input.checked ? 'Да' : 'Нет';
+            } else if (field.type === 'select') {
+                formData[field.key] = input.value;
+            } else {
+                formData[field.key] = input.value;
+            }
+        }
+    });
+    
+    const payload = {
+        template_id: templateId,
+        fields: formData,
+        document_name: documentName || ''  // Добавляем имя документа
+    };
+}
+
 // Копирование текста в буфер обмена
 function copyToClipboard(text) {
     navigator.clipboard.writeText(text)
