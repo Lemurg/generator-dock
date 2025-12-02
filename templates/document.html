@@ -17,6 +17,7 @@
             <div class="nav-links">
                 <a href="/"><i class="fas fa-home"></i> Главная</a>
                 <a href="/templates"><i class="fas fa-file-alt"></i> Шаблоны</a>
+                <a href="/documents"><i class="fas fa-folder-open"></i> Мои документы</a>
                 <a href="#" onclick="goBack()"><i class="fas fa-arrow-left"></i> Назад</a>
             </div>
         </div>
@@ -56,6 +57,11 @@
                 <div class="preview-content" id="previewContent">
                     <p>Заполните поля формы для просмотра данных</p>
                 </div>
+                <div class="form-group">
+                    <label for="document_name">Название документа:</label>
+                    <input type="text" id="document_name" class="form-control" 
+                        placeholder="Например: Договор аренды от 15.12.2024">
+                </div>
                 <div class="preview-info">
                     <p><i class="fas fa-info-circle"></i> Все обязательные поля отмечены звездочкой (*)</p>
                     <p><i class="fas fa-save"></i> Документ будет сохранен в системе после создания</p>
@@ -76,7 +82,7 @@
 
     <script src="/static/script.js"></script>
     <script>
-        const templateId = { template_id };
+        const templateId = {{ template_id }};
         let templateFields = [];
 
         document.addEventListener('DOMContentLoaded', function() {

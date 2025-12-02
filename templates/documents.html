@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мои документы - ДокументГен</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="logo">
+                <i class="fas fa-file-contract"></i>
+                <span>ДокументГен</span>
+            </a>
+            <div class="nav-links">
+                <a href="/"><i class="fas fa-home"></i> Главная</a>
+                <a href="/templates"><i class="fas fa-file-alt"></i> Шаблоны</a>
+                <a href="/documents" class="active"><i class="fas fa-folder-open"></i> Мои документы</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="page-header">
+            <h1><i class="fas fa-folder-open"></i> Мои документы</h1>
+            <p class="subtitle">Все созданные вами документы</p>
+        </div>
+
+        <div class="documents-container">
+            <div class="documents-header">
+                <div class="documents-count">
+                    <span id="documentsCount">Загрузка...</span>
+                </div>
+                <div class="documents-actions">
+                    <button class="btn btn-primary" onclick="refreshDocuments()">
+                        <i class="fas fa-sync-alt"></i> Обновить
+                    </button>
+                </div>
+            </div>
+
+            <div id="loading" class="loading">
+                <i class="fas fa-spinner fa-spin"></i> Загрузка документов...
+            </div>
+
+            <div class="documents-list" id="documentsList" style="display: none;">
+                <!-- Документы загрузятся здесь -->
+            </div>
+
+            <div id="noDocuments" class="empty-state" style="display: none;">
+                <i class="fas fa-file-excel"></i>
+                <h3>Документов пока нет</h3>
+                <p>У вас еще нет созданных документов. Создайте свой первый документ!</p>
+                <a href="/templates" class="btn btn-primary">
+                    <i class="fas fa-plus"></i> Создать документ
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container">
+            <p>© 2024 Генератор документов. Все права защищены.</p>
+        </div>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDocuments();
+        });
+
+        function loadDocuments() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('documentsList').style.display = 'none';
+            document.getElementById('noDocuments').style.display = 'none';
+
+            fetch('/api/documents')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+                    
+                    if (data.success && data.documents && data.documents.length > 0) {
+                        displayDocuments(data.documents);
+                    } else {
+                        showNoDocuments();
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки документов:', error);
+                    document.getElementById('loading').style.display = 'none';
+                    showError('Ошибка загрузки документов. Проверьте подключение к серверу.');
+                });
+        }
+
+        function displayDocuments(documents) {
+            const list = document.getElementById('documentsList');
+            const count = document.getElementById('documentsCount');
+            
+            count.textContent = `Найдено документов: ${documents.length}`;
+            
+            list.innerHTML = documents.map(doc => `
+                <div class="document-card">
+                    <div class="document-header">
+                        <h3>${doc.document_name || doc.template_name || 'Без названия'}</h3>
+                        <span class="status-badge status-${doc.status || 'draft'}">
+                            ${doc.status === 'generated' ? 'Создан' : 'Черновик'}
+                        </span>
+                    </div>
+                    
+                    <div class="document-info">
+                        <p><i class="fas fa-file-alt"></i> Шаблон: ${doc.template_name}</p>
+                        <p><i class="fas fa-calendar"></i> Создан: ${new Date(doc.created_at).toLocaleString('ru-RU')}</p>
+                    </div>
+                    
+                    <div class="document-actions">
+                        <a href="/api/documents/${doc.id}/view" target="_blank" class="btn btn-primary">
+                            <i class="fas fa-eye"></i> Просмотр
+                        </a>
+                        <a href="/api/documents/${doc.id}/download" class="btn btn-secondary">
+                            <i class="fas fa-download"></i> Скачать
+                        </a>
+                        <button onclick="deleteDocument(${doc.id})" class="btn btn-danger">
+                            <i class="fas fa-trash"></i> Удалить
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+            
+            list.style.display = 'block';
+        }
+
+        function showNoDocuments() {
+            document.getElementById('noDocuments').style.display = 'block';
+        }
+
+        function refreshDocuments() {
+            loadDocuments();
+        }
+
+        function deleteDocument(documentId) {
+            if (confirm('Вы уверены, что хотите удалить этот документ? Это действие нельзя отменить.')) {
+                fetch(`/api/documents/${documentId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Документ успешно удален');
+                        loadDocuments();
+                    } else {
+                        alert('Ошибка: ' + (data.error || 'Не удалось удалить документ'));
+                    }
+                })
+                .catch(error => {
+                    alert('Ошибка при удалении документа');
+                });
+            }
+        }
+
+        function showError(message) {
+            alert(message);
+        }
+    </script>
+</body>
+</html>

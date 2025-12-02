@@ -59,12 +59,13 @@ def init_database():
         )
     ''')
     
-    # Таблица заполненных документов
+   # Таблица заполненных документов
     conn.execute('''
         CREATE TABLE IF NOT EXISTS filled_documents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             template_id INTEGER NOT NULL,
             user_id INTEGER,
+            document_name TEXT,
             document_data TEXT NOT NULL,  -- JSON с заполненными данными
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             status TEXT DEFAULT 'draft',
@@ -302,10 +303,13 @@ def generate_document():
         data = request.get_json()
         
         if not data or 'template_id' not in data or 'fields' not in data:
-            return jsonify({'error': 'Необходимы template_id и fields'}), 400
+            error_data = {'error': 'Необходимы template_id и fields'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 400
         
         template_id = data['template_id']
         fields_data = data['fields']
+        document_name = data.get('document_name', '')
         
         conn = get_db_connection()
         
@@ -315,7 +319,10 @@ def generate_document():
         ).fetchone()
         
         if not template:
-            return jsonify({'error': 'Шаблон не найден'}), 404
+            conn.close()
+            error_data = {'error': 'Шаблон не найден'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 404
         
         # Валидация полей
         template_fields = conn.execute(
@@ -326,29 +333,45 @@ def generate_document():
         required_fields = [field['field_key'] for field in template_fields if field['is_required']]
         for req_field in required_fields:
             if req_field not in fields_data or not fields_data[req_field]:
-                return jsonify({'error': f'Обязательное поле "{req_field}" не заполнено'}), 400
+                conn.close()
+                error_data = {'error': f'Обязательное поле "{req_field}" не заполнено'}
+                error_response = json.dumps(error_data, ensure_ascii=False)
+                return Response(error_response, mimetype='application/json; charset=utf-8'), 400
         
         # Сохраняем документ
         cursor = conn.cursor()
+        if not document_name:
+            document_name = f"{template['name']} от {datetime.now().strftime('%d.%m.%Y')}"
+        
         cursor.execute('''
-            INSERT INTO filled_documents (template_id, document_data, status)
-            VALUES (?, ?, ?)
-        ''', (template_id, json.dumps(fields_data), 'generated'))
+            INSERT INTO filled_documents (template_id, document_name, document_data, status)
+            VALUES (?, ?, ?, ?)
+        ''', (template_id, document_name, json.dumps(fields_data, ensure_ascii=False), 'generated'))
         
         document_id = cursor.lastrowid
         conn.commit()
         conn.close()
         
-        return jsonify({
+        response_data = {
             'success': True,
             'document_id': document_id,
+            'document_name': document_name,
             'message': 'Документ успешно создан',
             'template_name': template['name'],
-            'generated_at': datetime.now().isoformat()
-        })
+            'generated_at': datetime.now().isoformat(),
+            'view_url': f'/documents/{document_id}',
+            'download_url': f'/api/documents/{document_id}/download'
+        }
+        
+        response = json.dumps(response_data, ensure_ascii=False)
+        return Response(response, mimetype='application/json; charset=utf-8')
         
     except Exception as e:
-        return jsonify({'error': f'Ошибка при создании документа: {str(e)}'}), 500
+        error_data = {'error': f'Ошибка при создании документа: {str(e)}'}
+        error_response = json.dumps(error_data, ensure_ascii=False)
+        return Response(error_response, mimetype='application/json; charset=utf-8'), 500
+
+# ==================== API FOR DOCUMENTS ====================
 
 @app.route('/api/documents', methods=['GET'])
 def get_documents():
@@ -356,13 +379,30 @@ def get_documents():
     try:
         conn = get_db_connection()
         
+        # Проверяем существование таблицы
+        try:
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='filled_documents'")
+            if not cursor.fetchone():
+                conn.close()
+                response_data = {
+                    'success': True,
+                    'documents': [],
+                    'count': 0,
+                    'message': 'Таблица документов пока не создана'
+                }
+                response = json.dumps(response_data, ensure_ascii=False)
+                return Response(response, mimetype='application/json; charset=utf-8')
+        except:
+            pass
+        
+        # Получаем документы
         documents = conn.execute('''
-            SELECT fd.id, fd.template_id, fd.created_at, fd.status,
+            SELECT fd.id, fd.template_id, fd.document_name, fd.created_at, fd.status,
                    t.name as template_name
             FROM filled_documents fd
-            JOIN templates t ON fd.template_id = t.id
+            LEFT JOIN templates t ON fd.template_id = t.id
             ORDER BY fd.created_at DESC
-            LIMIT 100
+            LIMIT 50
         ''').fetchall()
         
         conn.close()
@@ -372,18 +412,227 @@ def get_documents():
             documents_list.append({
                 'id': doc['id'],
                 'template_id': doc['template_id'],
-                'template_name': doc['template_name'],
+                'template_name': doc['template_name'] or 'Неизвестный шаблон',
+                'document_name': doc['document_name'] or f"Документ {doc['id']}",
                 'created_at': doc['created_at'],
-                'status': doc['status']
+                'status': doc['status'] or 'generated'
             })
         
-        return jsonify({
+        response_data = {
             'success': True,
             'documents': documents_list,
             'count': len(documents_list)
-        })
+        }
+        
+        response = json.dumps(response_data, ensure_ascii=False)
+        return Response(response, mimetype='application/json; charset=utf-8')
+        
     except Exception as e:
-        return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
+        error_data = {
+            'success': False,
+            'error': f'Ошибка сервера: {str(e)}',
+            'documents': [],
+            'count': 0
+        }
+        error_response = json.dumps(error_data, ensure_ascii=False)
+        return Response(error_response, mimetype='application/json; charset=utf-8'), 500
+
+@app.route('/api/documents/<int:document_id>', methods=['DELETE'])
+def delete_document(document_id):
+    """Удалить документ"""
+    try:
+        conn = get_db_connection()
+        
+        # Проверяем существование документа
+        document = conn.execute('SELECT id FROM filled_documents WHERE id = ?', (document_id,)).fetchone()
+        
+        if not document:
+            conn.close()
+            error_data = {'error': 'Документ не найден'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 404
+        
+        # Удаляем документ
+        conn.execute('DELETE FROM filled_documents WHERE id = ?', (document_id,))
+        conn.commit()
+        conn.close()
+        
+        response_data = {
+            'success': True,
+            'message': 'Документ успешно удален',
+            'document_id': document_id
+        }
+        
+        response = json.dumps(response_data, ensure_ascii=False)
+        return Response(response, mimetype='application/json; charset=utf-8')
+        
+    except Exception as e:
+        error_data = {'error': f'Ошибка при удалении документа: {str(e)}'}
+        error_response = json.dumps(error_data, ensure_ascii=False)
+        return Response(error_response, mimetype='application/json; charset=utf-8'), 500
+    
+@app.route('/api/documents/<int:document_id>/download', methods=['GET'])
+def download_document(document_id):
+    """Скачать документ в формате JSON"""
+    try:
+        conn = get_db_connection()
+        
+        document = conn.execute('''
+            SELECT fd.*, t.name as template_name
+            FROM filled_documents fd
+            JOIN templates t ON fd.template_id = t.id
+            WHERE fd.id = ?
+        ''', (document_id,)).fetchone()
+        
+        if not document:
+            conn.close()
+            error_data = {'error': 'Документ не найден'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 404
+        
+        # Парсим данные документа
+        document_data = json.loads(document['document_data'])
+        
+        # Формируем полный документ для скачивания
+        full_document = {
+            'document_id': document['id'],
+            'document_name': document['document_name'],
+            'template_name': document['template_name'],
+            'created_at': document['created_at'],
+            'data': document_data,
+            'metadata': {
+                'generated_by': 'Document Generator API',
+                'version': '1.0'
+            }
+        }
+        
+        conn.close()
+        
+        # Создаем имя файла
+        filename = f"{document['document_name']}_{document['id']}.json"
+        filename = filename.replace(' ', '_').replace('/', '_')
+        
+        response = Response(
+            json.dumps(full_document, ensure_ascii=False, indent=2),
+            mimetype='application/json',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'application/json; charset=utf-8'
+            }
+        )
+        return response
+        
+    except Exception as e:
+        error_data = {'error': f'Ошибка сервера: {str(e)}'}
+        error_response = json.dumps(error_data, ensure_ascii=False)
+        return Response(error_response, mimetype='application/json; charset=utf-8'), 500
+    
+@app.route('/api/documents/<int:document_id>/view', methods=['GET'])
+def view_document(document_id):
+    """Просмотреть документ в HTML формате"""
+    try:
+        conn = get_db_connection()
+        
+        document = conn.execute('''
+            SELECT fd.*, t.name as template_name, t.description as template_description
+            FROM filled_documents fd
+            JOIN templates t ON fd.template_id = t.id
+            WHERE fd.id = ?
+        ''', (document_id,)).fetchone()
+        
+        if not document:
+            conn.close()
+            error_data = {'error': 'Документ не найден'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 404
+        
+        # Парсим данные документа
+        document_data = json.loads(document['document_data'])
+        
+        conn.close()
+        
+        # Генерируем HTML для просмотра
+        html_content = f'''
+        <!DOCTYPE html>
+        <html lang="ru">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{document['document_name']}</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
+                .header {{ text-align: center; margin-bottom: 40px; border-bottom: 2px solid #333; padding-bottom: 20px; }}
+                .document-info {{ margin-bottom: 30px; background: #f5f5f5; padding: 20px; border-radius: 5px; }}
+                .field {{ margin-bottom: 20px; }}
+                .field-label {{ font-weight: bold; color: #333; }}
+                .field-value {{ margin-top: 5px; padding: 10px; background: white; border: 1px solid #ddd; border-radius: 3px; }}
+                .actions {{ margin-top: 40px; text-align: center; }}
+                .btn {{ display: inline-block; padding: 10px 20px; margin: 0 10px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; }}
+                .btn-download {{ background: #2196F3; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>{document['document_name']}</h1>
+                <p>Шаблон: {document['template_name']}</p>
+                <p>Создан: {document['created_at']}</p>
+            </div>
+            
+            <div class="document-info">
+                <h2>Заполненные данные:</h2>
+        '''
+        
+        for key, value in document_data.items():
+            html_content += f'''
+                <div class="field">
+                    <div class="field-label">{key}</div>
+                    <div class="field-value">{value}</div>
+                </div>
+            '''
+        
+        html_content += f'''
+            </div>
+            
+            <div class="actions">
+                <a href="/api/documents/{document_id}/download" class="btn btn-download">📥 Скачать JSON</a>
+                <a href="/documents" class="btn">← К списку документов</a>
+                <button onclick="window.print()" class="btn">🖨️ Печать</button>
+            </div>
+            
+            <script>
+                // Автоматическое форматирование дат
+                document.querySelectorAll('.field-value').forEach(el => {{
+                    const text = el.textContent;
+                    if (text.match(/^\\d{{4}}-\\d{{2}}-\\d{{2}}$/)) {{
+                        const date = new Date(text);
+                        el.textContent = date.toLocaleDateString('ru-RU');
+                    }}
+                }});
+            </script>
+        </body>
+        </html>
+        '''
+        
+        return Response(html_content, mimetype='text/html; charset=utf-8')
+        
+    except Exception as e:
+        error_html = f'''
+        <html>
+        <head><title>Ошибка</title></head>
+        <body>
+            <h1>Ошибка</h1>
+            <p>{str(e)}</p>
+            <a href="/documents">Вернуться к документам</a>
+        </body>
+        </html>
+        '''
+        return Response(error_html, mimetype='text/html; charset=utf-8'), 500
+    
+@app.route('/documents')
+def documents_page():
+    """Страница с созданными документами"""
+    return render_template('documents.html')
+
 
 @app.route('/api/statistics', methods=['GET'])
 def get_statistics():
