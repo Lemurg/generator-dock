@@ -268,8 +268,10 @@
             const payload = {
                 template_id: templateId,
                 fields: formData,
-                document_name: document.getElementById('document_name').value || ''
+                document_name: document.getElementById('document_name').value || '',
+                format: 'word'  // Указываем формат Word
             };
+
             
             fetch('/api/documents/generate', {
                 method: 'POST',
@@ -281,16 +283,26 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showSuccess(`<h3><i class="fas fa-check-circle"></i> Документ успешно создан!</h3>
+                    showSuccess(`
+                        <h3><i class="fas fa-check-circle"></i> Документ успешно создан!</h3>
                         <p>ID документа: <strong>${data.document_id}</strong></p>
                         <p>Шаблон: <strong>${data.template_name}</strong></p>
                         <p>Создан: <strong>${new Date(data.generated_at).toLocaleString()}</strong></p>
-                        <button class="btn btn-primary" onclick="createAnother()">
-                            <i class="fas fa-plus"></i> Создать еще один
-                        </button>
-                        <button class="btn btn-secondary" onclick="goBack()">
-                            <i class="fas fa-arrow-left"></i> Вернуться к шаблонам
-                        </button>`);
+                        <div class="download-buttons">
+                            <a href="${data.word_download_url}" class="btn btn-success">
+                                <i class="fas fa-file-word"></i> Скачать DOCX
+                            </a>
+                            <a href="${data.download_url}" class="btn btn-secondary">
+                                <i class="fas fa-file-code"></i> Скачать JSON
+                            </a>
+                            <button class="btn btn-primary" onclick="createAnother()">
+                                <i class="fas fa-plus"></i> Создать еще один
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="goBack()">
+                                <i class="fas fa-arrow-left"></i> Вернуться к шаблонам
+                            </button>
+                        </div>
+                    `);
                 } else {
                     showError(data.error || 'Неизвестная ошибка при создании документа');
                 }
@@ -370,6 +382,7 @@
             // Прокручиваем к результату
             resultDiv.scrollIntoView({ behavior: 'smooth' });
         }
+
 
         function showError(message) {
             const resultDiv = document.getElementById('resultMessage');

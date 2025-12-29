@@ -87,12 +87,13 @@ def init_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 template_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
-                document_name TEXT,
+                document_name TEXT NOT NULL,
                 document_data TEXT NOT NULL,
+                format TEXT DEFAULT 'json',
+                status TEXT DEFAULT 'generated',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT 'draft',
                 FOREIGN KEY (template_id) REFERENCES templates (id),
-                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                FOREIGN KEY (user_id) REFERENCES users (id)
             )
         ''')
         

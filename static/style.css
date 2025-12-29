@@ -1532,3 +1532,163 @@ textarea.form-control {
     justify-content: flex-end;
     gap: 10px;
 }
+
+/* Стили для опций скачивания */
+.document-download-options {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+}
+
+.dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown-toggle {
+    background-color: #6c757d;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    cursor: pointer;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.dropdown-toggle:hover {
+    background-color: #5a6268;
+}
+
+.dropdown-menu {
+    display: none;
+    position: absolute;
+    background-color: white;
+    min-width: 160px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    z-index: 1;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.dropdown-menu a {
+    color: #333;
+    padding: 12px 16px;
+    text-decoration: none;
+    display: block;
+    transition: background-color 0.3s;
+}
+
+.dropdown-menu a:hover {
+    background-color: #f5f5f5;
+}
+
+.dropdown:hover .dropdown-menu {
+    display: block;
+}
+
+/* Иконки для форматов файлов */
+.fa-file-word {
+    color: #2b579a;
+}
+
+.fa-file-code {
+    color: #f16529;
+}
+
+.fa-file-pdf {
+    color: #f40f02;
+}
+
+/* Стили для кнопок скачивания */
+.btn-success {
+    background-color: #28a745;
+    color: white;
+    border: none;
+}
+
+.btn-success:hover {
+    background-color: #218838;
+    color: white;
+}
+
+.btn-outline-secondary {
+    background-color: transparent;
+    border: 1px solid #6c757d;
+    color: #6c757d;
+}
+
+.btn-outline-secondary:hover {
+    background-color: #6c757d;
+    color: white;
+}
+
+.download-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    flex-wrap: wrap;
+}
+
+.document-actions {
+    display: flex;
+    gap: 10px;
+    padding-top: 15px;
+    border-top: 1px solid #eee;
+    flex-wrap: wrap;
+}
+
+/* Иконки для форматов */
+.fa-file-word {
+    color: white;
+    margin-right: 5px;
+}
+
+.fa-file-code {
+    color: white;
+    margin-right: 5px;
+}
+
+/* Адаптивность для кнопок */
+@media (max-width: 768px) {
+    .document-actions {
+        flex-direction: column;
+    }
+    
+    .document-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .download-buttons {
+        flex-direction: column;
+    }
+    
+    .download-buttons .btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Дополнительные стили для страницы профиля */
+.doc-format {
+    font-size: 11px;
+    color: #666;
+    margin-top: 2px;
+}
+
+.doc-actions .btn-small {
+    padding: 5px 8px;
+    font-size: 12px;
+}
+
+.doc-actions .btn-success {
+    background-color: #28a745;
+    color: white;
+}
+
+.doc-actions .btn-success:hover {
+    background-color: #218838;
+}

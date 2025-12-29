@@ -7,6 +7,10 @@ from datetime import datetime
 from database import get_db, close_connection, get_current_user, hash_password, verify_password
 from models import init_database, cleanup_sessions
 from functools import wraps
+from word_generator import generate_word_document, generate_contract_document
+import urllib.parse
+import os
+import re
 
 app = Flask(__name__)
 
@@ -743,12 +747,74 @@ def delete_document(document_id):
         error_response = json.dumps(error_data, ensure_ascii=False)
         return Response(error_response, mimetype='application/json; charset=utf-8'), 500
 
+def create_safe_filename(document_name, doc_id, extension):
+    """Создание безопасного ASCII имени файла с правильным расширением"""
+    # Преобразуем кириллицу в латиницу (транслитерация)
+    def transliterate(text):
+        translit_dict = {
+            'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd',
+            'е': 'e', 'ё': 'yo', 'ж': 'zh', 'з': 'z', 'и': 'i',
+            'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
+            'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
+            'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch',
+            'ш': 'sh', 'щ': 'sch', 'ъ': '', 'ы': 'y', 'ь': '',
+            'э': 'e', 'ю': 'yu', 'я': 'ya',
+            'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D',
+            'Е': 'E', 'Ё': 'Yo', 'Ж': 'Zh', 'З': 'Z', 'И': 'I',
+            'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M', 'Н': 'N',
+            'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T',
+            'У': 'U', 'Ф': 'F', 'Х': 'H', 'Ц': 'Ts', 'Ч': 'Ch',
+            'Ш': 'Sh', 'Щ': 'Sch', 'Ъ': '', 'Ы': 'Y', 'Ь': '',
+            'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
+        }
+        
+        result = []
+        for char in str(text):
+            if char in translit_dict:
+                result.append(translit_dict[char])
+            elif char.isalnum() or char in '_- ':
+                result.append(char)
+            else:
+                result.append('_')
+        
+        return ''.join(result)
+    
+    # Транслитерируем имя документа
+    if document_name and document_name.strip():
+        safe_name = transliterate(document_name.strip())
+    else:
+        safe_name = f"document_{doc_id}"
+    
+    # Заменяем пробелы на подчеркивания
+    safe_name = re.sub(r'\s+', '_', safe_name)
+    
+    # Удаляем все оставшиеся не-ASCII символы
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', safe_name)
+    
+    # Если имя стало пустым, используем просто document
+    if not safe_name:
+        safe_name = f"document_{doc_id}"
+    
+    # Убираем лишние подчеркивания
+    safe_name = re.sub(r'_+', '_', safe_name)
+    safe_name = safe_name.strip('_')
+    
+    # Обрезаем длину
+    if len(safe_name) > 40:
+        safe_name = safe_name[:40]
+    
+    # Собираем окончательное имя файла
+    filename = f"{safe_name}_{doc_id}.{extension}"
+    
+    return filename
 
 @app.route('/api/documents/<int:document_id>/download', methods=['GET'])
 @login_required
 def download_document(document_id):
     """Скачать документ"""
     try:
+        format_type = request.args.get('format', 'json').lower()
+        
         user = get_current_user()
         if not user:
             error_data = {'error': 'Требуется аутентификация'}
@@ -758,47 +824,89 @@ def download_document(document_id):
         db = get_db()
         
         # Ищем документ только текущего пользователя
-        document = db.execute('''
-            SELECT fd.*, t.name as template_name
+        documents = db.execute('''
+            SELECT fd.*, t.name as template_name, t.description as template_description, c.name as category_name
             FROM filled_documents fd
             JOIN templates t ON fd.template_id = t.id
+            LEFT JOIN categories c ON t.category_id = c.id
             WHERE fd.id = ? AND fd.user_id = ?
-        ''', (document_id, user['id'])).fetchone()
+        ''', (document_id, user['id'])).fetchall()
         
-        if not document:
+        if not documents:
             error_data = {'error': 'Документ не найден или нет прав доступа'}
             error_response = json.dumps(error_data, ensure_ascii=False)
             return Response(error_response, mimetype='application/json; charset=utf-8'), 404
         
+        # Берем первую запись
+        document = documents[0]
+        
         # Парсим данные документа
         document_data = json.loads(document['document_data'])
         
-        # Формируем полный документ для скачивания
-        full_document = {
-            'document_id': document['id'],
-            'document_name': document['document_name'],
-            'template_name': document['template_name'],
-            'created_at': document['created_at'],
-            'data': document_data,
-            'metadata': {
-                'generated_by': 'Document Generator API',
-                'version': '1.0'
+        if format_type == 'word':
+            # Генерация Word документа
+            template_data = {
+                'id': document['template_id'],
+                'name': document['template_name'],
+                'description': document['template_description'],
+                'category': document['category_name']
             }
-        }
-        
-        # Создаем имя файла
-        filename = f"{document['document_name']}_{document['id']}.json"
-        filename = filename.replace(' ', '_').replace('/', '_')
-        
-        response = Response(
-            json.dumps(full_document, ensure_ascii=False, indent=2),
-            mimetype='application/json',
-            headers={
-                'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Type': 'application/json; charset=utf-8'
+            
+            user_info = {
+                'id': user['id'],
+                'username': user['username'],
+                'full_name': user['full_name']
             }
-        )
-        return response
+            
+            word_bytes = generate_word_document(
+                template_data=template_data,
+                fields_data=document_data,
+                document_name=document['document_name'],
+                user_info=user_info
+            )
+            
+            # Создаем безопасное имя файла
+            filename = create_safe_filename(document['document_name'], document['id'], 'docx')
+            
+            response = Response(
+                word_bytes,
+                mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'X-Filename': filename  # Дополнительный заголовок для отладки
+                }
+            )
+            print(f"Скачивание Word: {filename}")  # Для отладки
+            return response
+        else:
+            # Возвращаем JSON
+            full_document = {
+                'document_id': document['id'],
+                'document_name': document['document_name'],
+                'template_name': document['template_name'],
+                'created_at': document['created_at'],
+                'data': document_data,
+                'metadata': {
+                    'generated_by': 'Document Generator API',
+                    'version': '1.0'
+                }
+            }
+            
+            # Создаем безопасное имя файла
+            filename = create_safe_filename(document['document_name'], document['id'], 'json')
+            
+            response = Response(
+                json.dumps(full_document, ensure_ascii=False, indent=2),
+                mimetype='application/json',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Content-Type': 'application/json; charset=utf-8',
+                    'X-Filename': filename  # Дополнительный заголовок для отладки
+                }
+            )
+            print(f"Скачивание JSON: {filename}")  # Для отладки
+            return response
         
     except Exception as e:
         error_data = {'error': f'Ошибка сервера: {str(e)}'}
@@ -806,10 +914,10 @@ def download_document(document_id):
         return Response(error_response, mimetype='application/json; charset=utf-8'), 500
 
 
-@app.route('/api/documents/<int:document_id>/view', methods=['GET'])
+@app.route('/api/documents/<int:document_id>/download/word', methods=['GET'])
 @login_required
-def view_document(document_id):
-    """Просмотреть документ"""
+def download_word_document(document_id):
+    """Скачать документ в формате Word"""
     try:
         user = get_current_user()
         if not user:
@@ -821,9 +929,10 @@ def view_document(document_id):
         
         # Ищем документ только текущего пользователя
         document = db.execute('''
-            SELECT fd.*, t.name as template_name, t.description as template_description
+            SELECT fd.*, t.name as template_name, t.description as template_description, c.name as category_name
             FROM filled_documents fd
             JOIN templates t ON fd.template_id = t.id
+            LEFT JOIN categories c ON t.category_id = c.id
             WHERE fd.id = ? AND fd.user_id = ?
         ''', (document_id, user['id'])).fetchone()
         
@@ -835,64 +944,77 @@ def view_document(document_id):
         # Парсим данные документа
         document_data = json.loads(document['document_data'])
         
-        # Генерируем HTML для просмотра
-        html_content = f'''
-        <!DOCTYPE html>
-        <html lang="ru">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>{document['document_name']}</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
-                .header {{ text-align: center; margin-bottom: 40px; border-bottom: 2px solid #333; padding-bottom: 20px; }}
-                .document-info {{ margin-bottom: 30px; background: #f5f5f5; padding: 20px; border-radius: 5px; }}
-                .field {{ margin-bottom: 20px; }}
-                .field-label {{ font-weight: bold; color: #333; }}
-                .field-value {{ margin-top: 5px; padding: 10px; background: white; border: 1px solid #ddd; border-radius: 3px; }}
-                .actions {{ margin-top: 40px; text-align: center; }}
-                .btn {{ display: inline-block; padding: 10px 20px; margin: 0 10px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; }}
-                .btn-download {{ background: #2196F3; }}
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>{document['document_name']}</h1>
-                <p>Шаблон: {document['template_name']}</p>
-                <p>Создан: {document['created_at']}</p>
-                <p>Владелец: {user['username']}</p>
-            </div>
-            
-            <div class="document-info">
-                <h2>Заполненные данные:</h2>
-        '''
+        # Подготовка данных для генерации Word
+        template_data = {
+            'id': document['template_id'],
+            'name': document['template_name'],
+            'description': document['template_description'],
+            'category': document['category_name']
+        }
         
-        # Добавляем каждое поле документа
-        for key, value in document_data.items():
-            html_content += f'''
-                <div class="field">
-                    <div class="field-label">{key}:</div>
-                    <div class="field-value">{value}</div>
-                </div>
-            '''
+        user_info = {
+            'id': user['id'],
+            'username': user['username'],
+            'full_name': user['full_name']
+        }
         
-        html_content += f'''
-            </div>
-            
-            <div class="actions">
-                <a href="/api/documents/{document_id}/download" class="btn btn-download">Скачать JSON</a>
-                <a href="/documents" class="btn">Вернуться к списку</a>
-            </div>
-        </body>
-        </html>
-        '''
+        # Генерация Word документа
+        word_bytes = generate_word_document(
+            template_data=template_data,
+            fields_data=document_data,
+            document_name=document['document_name'],
+            user_info=user_info
+        )
         
-        return Response(html_content, mimetype='text/html; charset=utf-8')
+        # Функция для безопасного создания имени файла
+        def safe_filename(filename):
+            # Заменяем проблемные символы
+            import re
+            filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+            # Удаляем лишние пробелы
+            filename = filename.strip()
+            # Ограничиваем длину
+            if len(filename) > 100:
+                name, ext = os.path.splitext(filename)
+                filename = name[:95] + ext
+            return filename
+        
+        # Создаем безопасное имя файла
+        import os
+        filename = f"{document['document_name']}_{document['id']}.docx"
+        filename = safe_filename(filename)
+        
+        # Кодируем имя файла для заголовка Content-Disposition
+        try:
+            # Используем RFC 5987 encoding для UTF-8
+            import urllib.parse
+            encoded_filename = urllib.parse.quote(filename, encoding='utf-8')
+            header_value = f"attachment; filename*=UTF-8''{encoded_filename}"
+        except:
+            # Если не получается, используем ASCII
+            ascii_filename = document['document_name'].encode('ascii', 'ignore').decode('ascii')
+            if not ascii_filename:
+                ascii_filename = f"document_{document['id']}"
+            filename = f"{ascii_filename}_{document['id']}.docx"
+            filename = safe_filename(filename)
+            header_value = f'attachment; filename="{filename}"'
+        
+        response = Response(
+            word_bytes,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            headers={
+                'Content-Disposition': header_value,
+                'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'Access-Control-Expose-Headers': 'Content-Disposition'
+            }
+        )
+        return response
         
     except Exception as e:
-        error_data = {'error': f'Ошибка сервера: {str(e)}'}
+        error_data = {'error': f'Ошибка генерации Word документа: {str(e)}'}
         error_response = json.dumps(error_data, ensure_ascii=False)
         return Response(error_response, mimetype='application/json; charset=utf-8'), 500
+
 
 
 @app.route('/api/stats/dashboard', methods=['GET'])
@@ -1219,6 +1341,130 @@ def delete_account():
     except Exception as e:
         return jsonify({'error': f'Ошибка удаления аккаунта: {str(e)}'}), 500
 
+
+@app.route('/api/documents/<int:document_id>/view', methods=['GET'])
+@login_required
+def view_document(document_id):
+    """Просмотреть документ"""
+    try:
+        user = get_current_user()
+        if not user:
+            error_data = {'error': 'Требуется аутентификация'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 401
+        
+        db = get_db()
+        
+        # Ищем документ только текущего пользователя
+        document = db.execute('''
+            SELECT fd.*, t.name as template_name, t.description as template_description
+            FROM filled_documents fd
+            JOIN templates t ON fd.template_id = t.id
+            WHERE fd.id = ? AND fd.user_id = ?
+        ''', (document_id, user['id'])).fetchone()
+        
+        if not document:
+            error_data = {'error': 'Документ не найден или нет прав доступа'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 404
+        
+        # Парсим данные документа
+        document_data = json.loads(document['document_data'])
+        
+        # Генерируем HTML для просмотра
+        html_content = f'''
+        <!DOCTYPE html>
+        <html lang="ru">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{document['document_name']}</title>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; background-color: #f8f9fa; }}
+                .container {{ max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                .header {{ text-align: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 2px solid #333; }}
+                .document-info {{ margin-bottom: 30px; background: #f5f5f5; padding: 20px; border-radius: 5px; }}
+                .field {{ margin-bottom: 20px; }}
+                .field-label {{ font-weight: bold; color: #333; margin-bottom: 5px; }}
+                .field-value {{ padding: 10px; background: white; border: 1px solid #ddd; border-radius: 3px; min-height: 20px; }}
+                .actions {{ margin-top: 40px; text-align: center; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }}
+                .btn {{ display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; transition: all 0.3s; }}
+                .btn-primary {{ background-color: #4CAF50; color: white; border: none; }}
+                .btn-primary:hover {{ background-color: #45a049; }}
+                .btn-success {{ background-color: #28a745; color: white; border: none; }}
+                .btn-success:hover {{ background-color: #218838; }}
+                .btn-secondary {{ background-color: #6c757d; color: white; border: none; }}
+                .btn-secondary:hover {{ background-color: #5a6268; }}
+                .btn-danger {{ background-color: #dc3545; color: white; border: none; }}
+                .btn-danger:hover {{ background-color: #c82333; }}
+                .document-meta {{ display: flex; justify-content: space-between; flex-wrap: wrap; margin-bottom: 20px; }}
+                .meta-item {{ margin-bottom: 10px; }}
+                @media (max-width: 768px) {{
+                    .actions {{ flex-direction: column; }}
+                    .btn {{ width: 100%; justify-content: center; }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>{document['document_name']}</h1>
+                </div>
+                
+                <div class="document-meta">
+                    <div class="meta-item">
+                        <strong>Шаблон:</strong> {document['template_name']}
+                    </div>
+                    <div class="meta-item">
+                        <strong>Создан:</strong> {document['created_at']}
+                    </div>
+                    <div class="meta-item">
+                        <strong>Владелец:</strong> {user['username']}
+                    </div>
+                </div>
+                
+                <div class="document-info">
+                    <h2>Заполненные данные:</h2>
+        '''
+        
+        # Добавляем каждое поле документа
+        for key, value in document_data.items():
+            html_content += f'''
+                    <div class="field">
+                        <div class="field-label">{key}:</div>
+                        <div class="field-value">{value}</div>
+                    </div>
+            '''
+        
+        html_content += f'''
+                </div>
+                
+                <div class="actions">
+                    <a href="/api/documents/{document_id}/download?format=word" class="btn btn-success">
+                        <i class="fas fa-file-word"></i> Скачать DOCX
+                    </a>
+                    <a href="/api/documents/{document_id}/download" class="btn btn-secondary">
+                        <i class="fas fa-file-code"></i> Скачать JSON
+                    </a>
+                    <a href="/documents" class="btn btn-primary">
+                        <i class="fas fa-folder-open"></i> Мои документы
+                    </a>
+                    <a href="/templates" class="btn btn-secondary">
+                        <i class="fas fa-file-alt"></i> Шаблоны
+                    </a>
+                </div>
+            </div>
+        </body>
+        </html>
+        '''
+        
+        return Response(html_content, mimetype='text/html; charset=utf-8')
+        
+    except Exception as e:
+        error_data = {'error': f'Ошибка сервера: {str(e)}'}
+        error_response = json.dumps(error_data, ensure_ascii=False)
+        return Response(error_response, mimetype='application/json; charset=utf-8'), 500
 
 # ==================== ERROR HANDLERS ====================
 

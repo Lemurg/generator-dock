@@ -160,13 +160,26 @@
             let html = '<div class="list-group">';
             documents.forEach(doc => {
                 html += `
-                    <a href="/api/documents/${doc.id}/view" target="_blank" class="list-group-item list-group-item-action">
-                        <div class="d-flex w-100 justify-content-between">
-                            <h6 class="mb-1">${doc.name}</h6>
-                            <small>${new Date(doc.created_at).toLocaleDateString()}</small>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">${doc.name}</h6>
+                                <small class="text-muted">Шаблон: ${doc.template}</small>
+                            </div>
+                            <div class="btn-group btn-group-sm">
+                                <a href="/api/documents/${doc.id}/view" target="_blank" class="btn btn-outline-primary" title="Просмотр">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <a href="/api/documents/${doc.id}/download?format=word" class="btn btn-outline-success" title="Скачать DOCX">
+                                    <i class="bi bi-file-word"></i>
+                                </a>
+                                <a href="/api/documents/${doc.id}/download" class="btn btn-outline-secondary" title="Скачать JSON">
+                                    <i class="bi bi-file-code"></i>
+                                </a>
+                            </div>
                         </div>
-                        <small class="text-muted">Шаблон: ${doc.template}</small>
-                    </a>
+                        <small class="text-muted">${new Date(doc.created_at).toLocaleDateString()}</small>
+                    </div>
                 `;
             });
             html += '</div>';

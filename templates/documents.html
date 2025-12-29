@@ -122,14 +122,18 @@
                     <div class="document-info">
                         <p><i class="fas fa-file-alt"></i> Шаблон: ${doc.template_name}</p>
                         <p><i class="fas fa-calendar"></i> Создан: ${new Date(doc.created_at).toLocaleString('ru-RU')}</p>
+                        <p><i class="fas fa-code"></i> Формат: ${doc.format === 'word' ? 'Word' : 'JSON'}</p>
                     </div>
                     
                     <div class="document-actions">
                         <a href="/api/documents/${doc.id}/view" target="_blank" class="btn btn-primary">
                             <i class="fas fa-eye"></i> Просмотр
                         </a>
+                        <a href="/api/documents/${doc.id}/download?format=word" class="btn btn-success">
+                            <i class="fas fa-file-word"></i> DOCX
+                        </a>
                         <a href="/api/documents/${doc.id}/download" class="btn btn-secondary">
-                            <i class="fas fa-download"></i> Скачать
+                            <i class="fas fa-file-code"></i> JSON
                         </a>
                         <button onclick="deleteDocument(${doc.id})" class="btn btn-danger">
                             <i class="fas fa-trash"></i> Удалить

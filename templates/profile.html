@@ -464,13 +464,17 @@
                                 <div class="doc-info">
                                     <div class="doc-name">${doc.document_name || 'Без названия'}</div>
                                     <div class="doc-date">${new Date(doc.created_at).toLocaleDateString('ru-RU')}</div>
+                                    <div class="doc-format">${doc.format === 'word' ? 'DOCX' : 'JSON'}</div>
                                 </div>
                                 <div class="doc-actions">
                                     <a href="/api/documents/${doc.id}/view" target="_blank" class="btn btn-small" title="Просмотр">
                                         <i class="fas fa-eye"></i>
                                     </a>
-                                    <a href="/api/documents/${doc.id}/download" class="btn btn-small" title="Скачать">
-                                        <i class="fas fa-download"></i>
+                                    <a href="/api/documents/${doc.id}/download?format=word" class="btn btn-small btn-success" title="Скачать DOCX">
+                                        <i class="fas fa-file-word"></i>
+                                    </a>
+                                    <a href="/api/documents/${doc.id}/download" class="btn btn-small" title="Скачать JSON">
+                                        <i class="fas fa-file-code"></i>
                                     </a>
                                 </div>
                             </div>
