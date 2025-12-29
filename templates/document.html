@@ -19,6 +19,15 @@
                 <a href="/templates"><i class="fas fa-file-alt"></i> Шаблоны</a>
                 <a href="/documents"><i class="fas fa-folder-open"></i> Мои документы</a>
                 <a href="#" onclick="goBack()"><i class="fas fa-arrow-left"></i> Назад</a>
+                <div class="user-dropdown" id="userDropdown">
+                    <a href="#" class="user-toggle" id="authNavLink">
+                        <i class="fas fa-user"></i> <span id="authNavText">Загрузка...</span>
+                    </a>
+                    <div class="dropdown-menu" id="dropdownMenu">
+                        <a href="/profile" id="profileLink"><i class="fas fa-user-circle"></i> Профиль</a>
+                        <a href="#" id="logoutLink"><i class="fas fa-sign-out-alt"></i> Выйти</a>
+                    </div>
+                </div>
             </div>
         </div>
     </nav>
@@ -81,8 +90,9 @@
     </footer>
 
     <script src="/static/script.js"></script>
+    <script src="/static/navigation.js"></script>
     <script>
-        const templateId = { template_id };
+        const templateId = {{ template_id }};
         let templateFields = [];
 
         document.addEventListener('DOMContentLoaded', function() {
@@ -257,7 +267,8 @@
             
             const payload = {
                 template_id: templateId,
-                fields: formData
+                fields: formData,
+                document_name: document.getElementById('document_name').value || ''
             };
             
             fetch('/api/documents/generate', {
@@ -270,8 +281,7 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showSuccess(`
-                        <h3><i class="fas fa-check-circle"></i> Документ успешно создан!</h3>
+                    showSuccess(`<h3><i class="fas fa-check-circle"></i> Документ успешно создан!</h3>
                         <p>ID документа: <strong>${data.document_id}</strong></p>
                         <p>Шаблон: <strong>${data.template_name}</strong></p>
                         <p>Создан: <strong>${new Date(data.generated_at).toLocaleString()}</strong></p>
@@ -280,8 +290,7 @@
                         </button>
                         <button class="btn btn-secondary" onclick="goBack()">
                             <i class="fas fa-arrow-left"></i> Вернуться к шаблонам
-                        </button>
-                    `);
+                        </button>`);
                 } else {
                     showError(data.error || 'Неизвестная ошибка при создании документа');
                 }

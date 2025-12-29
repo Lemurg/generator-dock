@@ -18,7 +18,15 @@
                 <a href="/" class="active"><i class="fas fa-home"></i> Главная</a>
                 <a href="/templates"><i class="fas fa-file-alt"></i> Шаблоны</a>
                 <a href="/documents"><i class="fas fa-folder-open"></i> Мои документы</a>
-                <a href="#" onclick="showStats()"><i class="fas fa-chart-bar"></i> Статистика</a>
+                <div class="user-dropdown" id="userDropdown">
+                    <a href="#" class="user-toggle" id="authNavLink">
+                        <i class="fas fa-user"></i> <span id="authNavText">Загрузка...</span>
+                    </a>
+                    <div class="dropdown-menu" id="dropdownMenu">
+                        <a href="/profile" id="profileLink"><i class="fas fa-user-circle"></i> Профиль</a>
+                        <a href="#" id="logoutLink"><i class="fas fa-sign-out-alt"></i> Выйти</a>
+                    </div>
+                </div>
             </div>
         </div>
     </nav>
@@ -87,13 +95,13 @@
         <div class="container">
             <p>© 2024 Генератор документов. Все права защищены.</p>
             <p class="footer-links">
-                <a href="#" onclick="seedDatabase()"><i class="fas fa-database"></i> Заполнить БД</a>
                 <a href="/api/statistics" target="_blank"><i class="fas fa-chart-bar"></i> API Статистика</a>
             </p>
         </div>
     </footer>
 
     <script src="/static/script.js"></script>
+    <script src="/static/navigation.js"></script>
     <script>
         // Загружаем статистику и популярные шаблоны
         document.addEventListener('DOMContentLoaded', function() {
@@ -142,16 +150,18 @@
                                 <div class="template-icon">
                                     <i class="fas fa-file-contract"></i>
                                 </div>
-                                <h3>${template.name}</h3>
-                                <p class="template-category">${template.category || 'Без категории'}</p>
-                                <p class="template-desc">${template.description || 'Без описания'}</p>
-                                <div class="template-stats">
-                                    <span><i class="fas fa-eye"></i> ${template.popularity}</span>
-                                    <span><i class="fas fa-font"></i> ${template.word_count ? (template.word_count/1000).toFixed(1)+'k' : 'N/A'}</span>
+                                <div class="template-content">
+                                    <h3>${template.name}</h3>
+                                    <p class="template-category">${template.category || 'Без категории'}</p>
+                                    <p class="template-desc">${template.description || 'Без описания'}</p>
+                                    <div class="template-meta">
+                                        <span class="template-type">${template.type || 'Не указан'}</span>
+                                        <span class="template-popularity"><i class="fas fa-eye"></i> ${template.popularity}</span>
+                                    </div>
+                                    <a href="/document/${template.id}" class="btn btn-primary">
+                                        <i class="fas fa-pen"></i> Заполнить
+                                    </a>
                                 </div>
-                                <a href="/document/${template.id}" class="btn btn-small">
-                                    <i class="fas fa-pen"></i> Заполнить
-                                </a>
                             </div>
                         `).join('');
                     } else {
@@ -170,28 +180,6 @@
                         </div>
                     `;
                 });
-        }
-
-        function seedDatabase() {
-            if (confirm('Заполнить базу данных начальными данными? Существующие данные будут удалены.')) {
-                fetch('/api/admin/seed', { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            alert('База данных успешно заполнена!');
-                            location.reload();
-                        } else {
-                            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
-                        }
-                    })
-                    .catch(error => {
-                        alert('Ошибка при заполнении БД: ' + error);
-                    });
-            }
-        }
-
-        function showStats() {
-            alert('Откройте консоль разработчика (F12) и перейдите на вкладку Network для просмотра запросов к API');
         }
     </script>
 </body>

@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход/Регистрация - ДокументГен</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .auth-container {
+            max-width: 400px;
+            margin: 50px auto;
+            padding: 40px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+        
+        .auth-tabs {
+            display: flex;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #eee;
+        }
+        
+        .auth-tab {
+            flex: 1;
+            text-align: center;
+            padding: 15px;
+            background: none;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+            color: #666;
+            transition: all 0.3s ease;
+        }
+        
+        .auth-tab.active {
+            color: #4CAF50;
+            border-bottom: 3px solid #4CAF50;
+            font-weight: bold;
+        }
+        
+        .auth-form {
+            display: none;
+        }
+        
+        .auth-form.active {
+            display: block;
+        }
+        
+        .auth-switch {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+        }
+        
+        .auth-switch a {
+            color: #4CAF50;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        
+        .auth-switch a:hover {
+            text-decoration: underline;
+        }
+        
+        .auth-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .auth-header h2 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        
+        .auth-error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .auth-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .password-toggle {
+            position: relative;
+        }
+        
+        .password-toggle-btn {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="logo">
+                <i class="fas fa-file-contract"></i>
+                <span>ДокументГен</span>
+            </a>
+            <div class="nav-links">
+                <a href="/"><i class="fas fa-home"></i> Главная</a>
+                <a href="/templates"><i class="fas fa-file-alt"></i> Шаблоны</a>
+                <a href="/documents"><i class="fas fa-folder-open"></i> Мои документы</a>
+                <a href="/"><i class="fas fa-arrow-left"></i> На главную</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="auth-container" id="authContainer">
+            <div class="auth-header">
+                <h2 id="authTitle">Вход в систему</h2>
+                <p id="authSubtitle">Войдите в свой аккаунт</p>
+            </div>
+            
+            <div class="auth-error" id="authError"></div>
+            <div class="auth-success" id="authSuccess"></div>
+            
+            <div class="auth-tabs">
+                <button class="auth-tab active" onclick="showLoginForm()">Вход</button>
+                <button class="auth-tab" onclick="showRegisterForm()">Регистрация</button>
+            </div>
+            
+            <form id="loginForm" class="auth-form active">
+                <div class="form-group">
+                    <label for="loginEmail"><i class="fas fa-envelope"></i> Email:</label>
+                    <input type="email" id="loginEmail" class="form-control" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="loginPassword"><i class="fas fa-lock"></i> Пароль:</label>
+                    <div class="password-toggle">
+                        <input type="password" id="loginPassword" class="form-control" required>
+                        <button type="button" class="password-toggle-btn" onclick="togglePassword('loginPassword')">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">
+                        <i class="fas fa-sign-in-alt"></i> Войти
+                    </button>
+                </div>
+                
+                <div class="auth-switch">
+                    Нет аккаунта? <a href="#" onclick="showRegisterForm()">Зарегистрируйтесь</a>
+                </div>
+            </form>
+            
+            <form id="registerForm" class="auth-form">
+                <div class="form-group">
+                    <label for="registerEmail"><i class="fas fa-envelope"></i> Email:</label>
+                    <input type="email" id="registerEmail" class="form-control" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="registerUsername"><i class="fas fa-user"></i> Имя пользователя:</label>
+                    <input type="text" id="registerUsername" class="form-control" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="registerFullName"><i class="fas fa-id-card"></i> Полное имя (необязательно):</label>
+                    <input type="text" id="registerFullName" class="form-control">
+                </div>
+                
+                <div class="form-group">
+                    <label for="registerPassword"><i class="fas fa-lock"></i> Пароль:</label>
+                    <div class="password-toggle">
+                        <input type="password" id="registerPassword" class="form-control" required minlength="6">
+                        <button type="button" class="password-toggle-btn" onclick="togglePassword('registerPassword')">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                    <small class="form-text">Минимум 6 символов</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="registerConfirmPassword"><i class="fas fa-lock"></i> Подтверждение пароля:</label>
+                    <div class="password-toggle">
+                        <input type="password" id="registerConfirmPassword" class="form-control" required>
+                        <button type="button" class="password-toggle-btn" onclick="togglePassword('registerConfirmPassword')">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <button type="submit" class="btn btn-primary" style="width: 100%;">
+                        <i class="fas fa-user-plus"></i> Зарегистрироваться
+                    </button>
+                </div>
+                
+                <div class="auth-switch">
+                    Уже есть аккаунт? <a href="#" onclick="showLoginForm()">Войдите</a>
+                </div>
+            </form>
+        </div>
+        
+        <div class="user-panel" id="userPanel" style="display: none;">
+            <div class="auth-container">
+                <div class="auth-header">
+                    <h2>Профиль пользователя</h2>
+                    <p id="userGreeting"></p>
+                </div>
+                
+                <div class="user-info" id="userInfo">
+                    <!-- Информация о пользователе -->
+                </div>
+                
+                <div class="form-actions">
+                    <button class="btn btn-secondary" onclick="logoutUser()" style="width: 100%;">
+                        <i class="fas fa-sign-out-alt"></i> Выйти
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container">
+            <p>© 2024 Генератор документов. Все права защищены.</p>
+        </div>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            checkAuthStatus();
+            
+            // Обработка формы входа
+            document.getElementById('loginForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                loginUser();
+            });
+            
+            // Обработка формы регистрации
+            document.getElementById('registerForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                registerUser();
+            });
+        });
+        
+        function showLoginForm() {
+            document.querySelectorAll('.auth-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.auth-form').forEach(form => form.classList.remove('active'));
+            
+            document.querySelector('.auth-tab:nth-child(1)').classList.add('active');
+            document.getElementById('loginForm').classList.add('active');
+            document.getElementById('authTitle').textContent = 'Вход в систему';
+            document.getElementById('authSubtitle').textContent = 'Войдите в свой аккаунт';
+            
+            hideMessages();
+        }
+        
+        function showRegisterForm() {
+            document.querySelectorAll('.auth-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.auth-form').forEach(form => form.classList.remove('active'));
+            
+            document.querySelector('.auth-tab:nth-child(2)').classList.add('active');
+            document.getElementById('registerForm').classList.add('active');
+            document.getElementById('authTitle').textContent = 'Регистрация';
+            document.getElementById('authSubtitle').textContent = 'Создайте новый аккаунт';
+            
+            hideMessages();
+        }
+        
+        function hideMessages() {
+            document.getElementById('authError').style.display = 'none';
+            document.getElementById('authSuccess').style.display = 'none';
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('authError');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            document.getElementById('authSuccess').style.display = 'none';
+        }
+        
+        function showSuccess(message) {
+            const successDiv = document.getElementById('authSuccess');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            document.getElementById('authError').style.display = 'none';
+        }
+        
+        function checkAuthStatus() {
+            fetch('/api/auth/check')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.authenticated) {
+                        showUserPanel(data.user);
+                    } else {
+                        showAuthForms();
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка проверки аутентификации:', error);
+                    showAuthForms();
+                });
+        }
+        
+        function showUserPanel(user) {
+            document.getElementById('authContainer').style.display = 'none';
+            document.getElementById('userPanel').style.display = 'block';
+            
+            document.getElementById('userGreeting').textContent = `Добро пожаловать, ${user.username}!`;
+            
+            document.getElementById('userInfo').innerHTML = `
+                <div class="form-group">
+                    <label><i class="fas fa-envelope"></i> Email:</label>
+                    <div class="form-control" style="background: #f8f9fa;">${user.email}</div>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-user"></i> Имя пользователя:</label>
+                    <div class="form-control" style="background: #f8f9fa;">${user.username}</div>
+                </div>
+                ${user.full_name ? `
+                <div class="form-group">
+                    <label><i class="fas fa-id-card"></i> Полное имя:</label>
+                    <div class="form-control" style="background: #f8f9fa;">${user.full_name}</div>
+                </div>
+                ` : ''}
+            `;
+        }
+        
+        function showAuthForms() {
+            document.getElementById('authContainer').style.display = 'block';
+            document.getElementById('userPanel').style.display = 'none';
+        }
+        
+        function loginUser() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            if (!email || !password) {
+                showError('Заполните все поля');
+                return;
+            }
+            
+            fetch('/api/auth/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    email: email,
+                    password: password
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showSuccess('Вход выполнен успешно!');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1500);
+                } else {
+                    showError(data.error || 'Ошибка входа');
+                }
+            })
+            .catch(error => {
+                showError('Ошибка соединения с сервером');
+            });
+        }
+        
+        function registerUser() {
+            const email = document.getElementById('registerEmail').value;
+            const username = document.getElementById('registerUsername').value;
+            const fullName = document.getElementById('registerFullName').value;
+            const password = document.getElementById('registerPassword').value;
+            const confirmPassword = document.getElementById('registerConfirmPassword').value;
+            
+            if (!email || !username || !password) {
+                showError('Заполните обязательные поля');
+                return;
+            }
+            
+            if (password.length < 6) {
+                showError('Пароль должен содержать минимум 6 символов');
+                return;
+            }
+            
+            if (password !== confirmPassword) {
+                showError('Пароли не совпадают');
+                return;
+            }
+            
+            fetch('/api/auth/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    email: email,
+                    username: username,
+                    full_name: fullName,
+                    password: password
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showSuccess('Регистрация успешна!');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1500);
+                } else {
+                    showError(data.error || 'Ошибка регистрации');
+                }
+            })
+            .catch(error => {
+                showError('Ошибка соединения с сервером');
+            });
+        }
+        
+        function logoutUser() {
+            fetch('/api/auth/logout', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAuthForms();
+                    showLoginForm();
+                    showSuccess('Выход выполнен успешно');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1500);
+                }
+            })
+            .catch(error => {
+                console.error('Ошибка выхода:', error);
+            });
+        }
+        
+        function togglePassword(inputId) {
+            const input = document.getElementById(inputId);
+            const button = input.nextElementSibling;
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                button.innerHTML = '<i class="fas fa-eye-slash"></i>';
+            } else {
+                input.type = 'password';
+                button.innerHTML = '<i class="fas fa-eye"></i>';
+            }
+        }
+    </script>
+</body>
+</html>

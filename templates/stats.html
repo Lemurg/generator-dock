@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Статистика - Document Generator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .stat-card {
+            transition: transform 0.3s;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .stat-icon {
+            font-size: 2.5rem;
+            opacity: 0.8;
+        }
+        .chart-container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-file-text"></i> Document Generator
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-house"></i> Главная</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/templates"><i class="bi bi-file-earmark"></i> Шаблоны</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/documents"><i class="bi bi-files"></i> Мои документы</a></li>
+                    <li class="nav-item"><a class="nav-link active" href="/stats"><i class="bi bi-bar-chart"></i> Статистика</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/profile"><i class="bi bi-person-circle"></i> Профиль</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#" id="logoutBtn"><i class="bi bi-box-arrow-right"></i> Выход</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h1 class="mb-4"><i class="bi bi-bar-chart me-2"></i>Статистика</h1>
+        
+        <div class="row mb-4" id="userStats">
+            <!-- Статистика пользователя загрузится здесь -->
+        </div>
+
+        <div class="row">
+            <div class="col-md-6">
+                <div class="chart-container">
+                    <h4>Последние документы</h4>
+                    <div id="recentDocuments"></div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="chart-container">
+                    <h4>Популярные шаблоны</h4>
+                    <div id="popularTemplates"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="chart-container">
+                    <h4>Общая статистика системы</h4>
+                    <div id="globalStats"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            setupLogout();
+        });
+
+        function loadStats() {
+            fetch('/api/stats/dashboard')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        renderUserStats(data.stats.user);
+                        renderRecentDocuments(data.stats.user.recent_documents);
+                        renderPopularTemplates(data.stats.user.popular_templates);
+                        renderGlobalStats(data.stats.global);
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки статистики:', error);
+                });
+        }
+
+        function renderUserStats(stats) {
+            const userStatsHTML = `
+                <div class="col-md-3 mb-3">
+                    <div class="card stat-card text-white bg-primary">
+                        <div class="card-body text-center">
+                            <div class="stat-icon mb-2">
+                                <i class="bi bi-file-text"></i>
+                            </div>
+                            <h2>${stats.total_documents}</h2>
+                            <h5>Всего документов</h5>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card stat-card text-white bg-success">
+                        <div class="card-body text-center">
+                            <div class="stat-icon mb-2">
+                                <i class="bi bi-collection"></i>
+                            </div>
+                            <h2>${stats.unique_templates}</h2>
+                            <h5>Уникальных шаблонов</h5>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card stat-card text-white bg-info">
+                        <div class="card-body text-center">
+                            <div class="stat-icon mb-2">
+                                <i class="bi bi-calendar-check"></i>
+                            </div>
+                            <h2>${stats.today_documents}</h2>
+                            <h5>Сегодня</h5>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card stat-card text-white bg-warning">
+                        <div class="card-body text-center">
+                            <div class="stat-icon mb-2">
+                                <i class="bi bi-calendar"></i>
+                            </div>
+                            <h2>${stats.yesterday_documents}</h2>
+                            <h5>Вчера</h5>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('userStats').innerHTML = userStatsHTML;
+        }
+
+        function renderRecentDocuments(documents) {
+            let html = '<div class="list-group">';
+            documents.forEach(doc => {
+                html += `
+                    <a href="/api/documents/${doc.id}/view" target="_blank" class="list-group-item list-group-item-action">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">${doc.name}</h6>
+                            <small>${new Date(doc.created_at).toLocaleDateString()}</small>
+                        </div>
+                        <small class="text-muted">Шаблон: ${doc.template}</small>
+                    </a>
+                `;
+            });
+            html += '</div>';
+            document.getElementById('recentDocuments').innerHTML = html;
+        }
+
+        function renderPopularTemplates(templates) {
+            let html = '<div class="list-group">';
+            templates.forEach(tpl => {
+                html += `
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">${tpl.name}</h6>
+                            <span class="badge bg-primary rounded-pill">${tpl.usage_count}</span>
+                        </div>
+                        <small>Использований</small>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            document.getElementById('popularTemplates').innerHTML = html;
+        }
+
+        function renderGlobalStats(stats) {
+            const globalStatsHTML = `
+                <div class="row text-center">
+                    <div class="col-md-3 mb-3">
+                        <div class="p-3 border rounded">
+                            <h3>${stats.total_users}</h3>
+                            <p class="text-muted mb-0">Пользователей</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="p-3 border rounded">
+                            <h3>${stats.total_templates}</h3>
+                            <p class="text-muted mb-0">Шаблонов</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="p-3 border rounded">
+                            <h3>${stats.total_documents}</h3>
+                            <p class="text-muted mb-0">Всего документов</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="p-3 border rounded">
+                            <h3>${stats.today_total_docs}</h3>
+                            <p class="text-muted mb-0">Документов сегодня</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('globalStats').innerHTML = globalStatsHTML;
+        }
+
+        function setupLogout() {
+            document.getElementById('logoutBtn').addEventListener('click', function(e) {
+                e.preventDefault();
+                
+                fetch('/api/auth/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.href = '/';
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка выхода:', error);
+                    window.location.href = '/';
+                });
+            });
+        }
+    </script>
+</body>
+</html>

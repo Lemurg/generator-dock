@@ -222,3 +222,103 @@ function closeModal(modalId) {
         document.body.style.overflow = 'auto';
     }
 }
+
+// Функции аутентификации
+function checkAuth() {
+    return fetch('/api/auth/check')
+        .then(response => response.json())
+        .then(data => {
+            return data.authenticated ? data.user : null;
+        })
+        .catch(() => null);
+}
+
+function requireAuth(redirectUrl = '/auth') {
+    checkAuth().then(user => {
+        if (!user) {
+            window.location.href = redirectUrl;
+        }
+    });
+}
+
+function logout() {
+    fetch('/api/auth/logout', { method: 'POST' })
+        .then(() => {
+            window.location.href = '/';
+        })
+        .catch(error => {
+            console.error('Ошибка выхода:', error);
+        });
+}
+
+// Обновляем навигацию при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    // Проверяем подключение к API
+    checkApiConnection().then(isConnected => {
+        if (!isConnected) {
+            showNotification('Нет подключения к серверу API', 'error');
+        }
+    });
+    
+    // Добавляем эффекты наведения для всех карточек
+    document.querySelectorAll('.template-card, .feature-card, .stat-card').forEach(card => {
+        card.addEventListener('mouseenter', function() {
+            this.style.transform = 'translateY(-5px)';
+        });
+        
+        card.addEventListener('mouseleave', function() {
+            this.style.transform = 'translateY(0)';
+        });
+    });
+    
+    // Обновляем навигацию для отображения статуса пользователя
+    updateNavigation();
+});
+
+function updateNavigation() {
+    checkAuth().then(user => {
+        const authLinks = document.querySelectorAll('[href="/auth"], [href="#"]');
+        
+        authLinks.forEach(link => {
+            if (user) {
+                link.innerHTML = '<i class="fas fa-user"></i> ' + user.username;
+                link.href = '/auth';
+            } else {
+                link.innerHTML = '<i class="fas fa-user"></i> Войти';
+                link.href = '/auth';
+            }
+        });
+    });
+}
+
+// Функция для проверки пароля при регистрации
+function validatePassword(password) {
+    if (password.length < 6) {
+        return 'Пароль должен содержать минимум 6 символов';
+    }
+    return null;
+}
+
+// Функция для валидации формы регистрации
+function validateRegistrationForm(email, username, password, confirmPassword) {
+    const errors = [];
+    
+    if (!email || !email.includes('@')) {
+        errors.push('Введите корректный email');
+    }
+    
+    if (!username || username.length < 3) {
+        errors.push('Имя пользователя должно содержать минимум 3 символа');
+    }
+    
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+        errors.push(passwordError);
+    }
+    
+    if (password !== confirmPassword) {
+        errors.push('Пароли не совпадают');
+    }
+    
+    return errors;
+}

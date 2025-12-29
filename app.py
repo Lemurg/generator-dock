@@ -1,112 +1,351 @@
-from flask import Flask, jsonify, Response, request, render_template
-import sqlite3
+"""Главный файл приложения Flask"""
+
+from flask import Flask, render_template, redirect, url_for, request, jsonify, Response, g
+import atexit
 import json
 from datetime import datetime
+from database import get_db, close_connection, get_current_user, hash_password, verify_password
+from models import init_database, cleanup_sessions
+from functools import wraps
 
 app = Flask(__name__)
 
-def get_db_connection():
-    """Подключение к базе данных SQLite"""
-    conn = sqlite3.connect('documents.db')
-    conn.row_factory = sqlite3.Row
-    return conn
+# Регистрируем обработчики БД
+app.teardown_appcontext(close_connection)
 
-def init_database():
-    """Инициализация базы данных с таблицами"""
-    conn = get_db_connection()
-    
-    # Таблица категорий документов
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            description TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Таблица шаблонов документов
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS templates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category_id INTEGER,
-            name TEXT NOT NULL,
-            description TEXT,
-            doc_type TEXT CHECK(doc_type IN ('Договор', 'Заявление', 'Исковое заявление', 'Соглашение', 'Расторжение', 'Акт', 'Доверенность', 'Приказ', 'Прочее')),
-            word_count INTEGER,
-            popularity INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (category_id) REFERENCES categories (id)
-        )
-    ''')
-    
-    # Таблица полей шаблонов
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS template_fields (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            template_id INTEGER NOT NULL,
-            field_key TEXT NOT NULL,
-            field_label TEXT NOT NULL,
-            field_type TEXT NOT NULL CHECK(field_type IN ('text', 'number', 'date', 'email', 'phone', 'select', 'textarea', 'boolean')),
-            is_required BOOLEAN DEFAULT 0,
-            min_value INTEGER,
-            max_value INTEGER,
-            format TEXT,
-            placeholder TEXT,
-            options TEXT,  -- JSON массив для select полей
-            order_index INTEGER DEFAULT 0,
-            FOREIGN KEY (template_id) REFERENCES templates (id)
-        )
-    ''')
-    
-   # Таблица заполненных документов
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS filled_documents (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            template_id INTEGER NOT NULL,
-            user_id INTEGER,
-            document_name TEXT,
-            document_data TEXT NOT NULL,  -- JSON с заполненными данными
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status TEXT DEFAULT 'draft',
-            FOREIGN KEY (template_id) REFERENCES templates (id)
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+
+def login_required(f):
+    """Декоратор для проверки аутентификации"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+            # Если это API запрос, возвращаем ошибку
+            if request.path.startswith('/api/'):
+                return jsonify({'error': 'Требуется аутентификация'}), 401
+            # Если это страница, перенаправляем на вход
+            return redirect(url_for('auth_page'))
+        return f(*args, **kwargs)
+    return decorated_function
+
 
 # ==================== FRONTEND ROUTES ====================
 
 @app.route('/')
 def index():
     """Главная страница"""
-    return render_template('index.html')
+    user = get_current_user()
+    return render_template('index.html', user=user)
+
 
 @app.route('/templates')
 def templates_page():
     """Страница с шаблонами"""
-    return render_template('templates.html')
+    user = get_current_user()
+    return render_template('templates.html', user=user)
+
 
 @app.route('/document/<int:template_id>')
+@login_required
 def document_page(template_id):
     """Страница заполнения документа"""
-    return render_template('document.html', template_id=template_id)
+    user = get_current_user()
+    return render_template('document.html', template_id=template_id, user=user)
+
+
+@app.route('/documents')
+@login_required
+def documents_page():
+    """Страница с созданными документами"""
+    user = get_current_user()
+    return render_template('documents.html', user=user)
+
+
+@app.route('/auth')
+def auth_page():
+    """Страница аутентификации"""
+    user = get_current_user()
+    if user:
+        # Если пользователь уже авторизован, перенаправляем на главную
+        return redirect(url_for('index'))
+    
+    return render_template('auth.html', user=user)
+
+
+@app.route('/profile')
+@login_required
+def profile_page():
+    """Страница профиля пользователя"""
+    user = get_current_user()
+    return render_template('profile.html', user=user)
+
+
+@app.route('/stats')
+@login_required
+def stats_page():
+    """Страница статистики"""
+    user = get_current_user()
+    return render_template('stats.html', user=user)
+
 
 # ==================== API ROUTES ====================
+
+@app.route('/api/auth/check', methods=['GET'])
+def check_auth():
+    """Проверить статус аутентификации"""
+    try:
+        user = get_current_user()
+        if user:
+            return jsonify({
+                'authenticated': True,
+                'user': {
+                    'id': user['id'],
+                    'email': user['email'],
+                    'username': user['username'],
+                    'full_name': user['full_name']
+                }
+            })
+        else:
+            return jsonify({'authenticated': False})
+    except Exception as e:
+        return jsonify({'authenticated': False, 'error': str(e)}), 500
+
+
+@app.route('/api/auth/register', methods=['POST'])
+def register_user():
+    """Регистрация нового пользователя"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'Нет данных'}), 400
+            
+        email = data.get('email', '').strip().lower()
+        username = data.get('username', '').strip()
+        password = data.get('password', '').strip()
+        full_name = data.get('full_name', '').strip()
+        
+        if not email or not username or not password:
+            return jsonify({'error': 'Все поля обязательны для заполнения'}), 400
+        
+        if len(password) < 6:
+            return jsonify({'error': 'Пароль должен содержать минимум 6 символов'}), 400
+        
+        db = get_db()
+        
+        try:
+            db.execute('BEGIN TRANSACTION')
+            
+            # Проверка существующего email
+            existing_user = db.execute(
+                'SELECT id FROM users WHERE email = ?', 
+                (email,)
+            ).fetchone()
+            
+            if existing_user:
+                db.rollback()
+                return jsonify({'error': 'Пользователь с таким email уже существует'}), 400
+            
+            # Хеширование пароля
+            password_hash = hash_password(password)
+            
+            # Создание пользователя
+            cursor = db.execute('''
+                INSERT INTO users (email, username, password_hash, full_name)
+                VALUES (?, ?, ?, ?)
+            ''', (email, username, password_hash, full_name))
+            
+            user_id = cursor.lastrowid
+            
+            # Создание сессии
+            import secrets
+            session_token = secrets.token_hex(32)
+            db.execute('''
+                INSERT INTO user_sessions (user_id, session_token, expires_at)
+                VALUES (?, ?, datetime("now", "+30 days"))
+            ''', (user_id, session_token))
+            
+            db.commit()
+            
+            user_data = db.execute('''
+                SELECT id, email, username, full_name FROM users WHERE id = ?
+            ''', (user_id,)).fetchone()
+            
+            response = jsonify({
+                'success': True,
+                'message': 'Регистрация успешна',
+                'user': {
+                    'id': user_data['id'],
+                    'email': user_data['email'],
+                    'username': user_data['username'],
+                    'full_name': user_data['full_name']
+                }
+            })
+            
+            # Устанавливаем cookies
+            response.set_cookie('user_id', str(user_id), max_age=30*24*60*60, httponly=True, samesite='Strict')
+            response.set_cookie('token', session_token, max_age=30*24*60*60, httponly=True, samesite='Strict')
+            
+            return response
+            
+        except Exception as e:
+            db.rollback()
+            return jsonify({'error': f'Ошибка базы данных: {str(e)}'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Ошибка регистрации: {str(e)}'}), 500
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def login_user():
+    """Вход пользователя"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'Нет данных'}), 400
+            
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '').strip()
+        
+        if not email or not password:
+            return jsonify({'error': 'Email и пароль обязательны'}), 400
+        
+        db = get_db()
+        
+        try:
+            db.execute('BEGIN TRANSACTION')
+            
+            # Поиск пользователя
+            user = db.execute('''
+                SELECT id, email, username, password_hash, full_name 
+                FROM users 
+                WHERE email = ? AND is_active = 1
+            ''', (email,)).fetchone()
+            
+            if not user:
+                db.rollback()
+                return jsonify({'error': 'Неверный email или пароль'}), 401
+            
+            # Проверка пароля
+            if not verify_password(password, user['password_hash']):
+                db.rollback()
+                return jsonify({'error': 'Неверный email или пароль'}), 401
+            
+            # Создание новой сессии
+            import secrets
+            session_token = secrets.token_hex(32)
+            
+            # Удаляем старые сессии
+            db.execute('DELETE FROM user_sessions WHERE user_id = ?', (user['id'],))
+            
+            db.execute('''
+                INSERT INTO user_sessions (user_id, session_token, expires_at)
+                VALUES (?, ?, datetime("now", "+30 days"))
+            ''', (user['id'], session_token))
+            
+            # Обновляем время последнего входа
+            db.execute('''
+                UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?
+            ''', (user['id'],))
+            
+            db.commit()
+            
+            response = jsonify({
+                'success': True,
+                'message': 'Вход выполнен успешно',
+                'user': {
+                    'id': user['id'],
+                    'email': user['email'],
+                    'username': user['username'],
+                    'full_name': user['full_name']
+                }
+            })
+            
+            # Устанавливаем cookies
+            response.set_cookie('user_id', str(user['id']), max_age=30*24*60*60, httponly=True, samesite='Strict')
+            response.set_cookie('token', session_token, max_age=30*24*60*60, httponly=True, samesite='Strict')
+            
+            return response
+            
+        except Exception as e:
+            db.rollback()
+            return jsonify({'error': f'Ошибка базы данных: {str(e)}'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Ошибка входа: {str(e)}'}), 500
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout_user():
+    """Выход пользователя"""
+    try:
+        user_id = request.cookies.get('user_id')
+        token = request.cookies.get('token')
+        
+        response = jsonify({
+            'success': True,
+            'message': 'Выход выполнен успешно'
+        })
+        
+        # Удаляем cookies
+        response.delete_cookie('user_id')
+        response.delete_cookie('token')
+        
+        # Удаляем сессию из базы данных
+        if user_id and token:
+            db = get_db()
+            try:
+                db.execute('DELETE FROM user_sessions WHERE user_id = ? AND session_token = ?', 
+                          (user_id, token))
+                db.commit()
+            except Exception as e:
+                print(f"Ошибка удаления сессии: {e}")
+        
+        return response
+        
+    except Exception as e:
+        return jsonify({'error': f'Ошибка выхода: {str(e)}'}), 500
+
+
+@app.route('/api/statistics', methods=['GET'])
+def get_statistics():
+    """Получить статистику системы"""
+    try:
+        db = get_db()
+        
+        stats = db.execute('''
+            SELECT 
+                (SELECT COUNT(*) FROM templates) as total_templates,
+                (SELECT COUNT(*) FROM filled_documents) as total_documents,
+                (SELECT COUNT(*) FROM users) as total_users,
+                (SELECT COUNT(*) FROM categories) as total_categories
+        ''').fetchone()
+        
+        return jsonify({
+            'success': True,
+            'statistics': {
+                'total_templates': stats['total_templates'],
+                'total_documents': stats['total_documents'],
+                'total_users': stats['total_users'],
+                'total_categories': stats['total_categories']
+            }
+        })
+    except Exception as e:
+        return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
+
 
 @app.route('/api/categories', methods=['GET'])
 def get_categories():
     """Получить все категории документов"""
     try:
-        conn = get_db_connection()
-        categories = conn.execute('''
+        db = get_db()
+        categories = db.execute('''
             SELECT id, name, description, 
                    (SELECT COUNT(*) FROM templates WHERE category_id = categories.id) as template_count
             FROM categories 
             ORDER BY name
         ''').fetchall()
-        conn.close()
         
         categories_list = []
         for cat in categories:
@@ -125,6 +364,7 @@ def get_categories():
     except Exception as e:
         return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
 
+
 @app.route('/api/templates', methods=['GET'])
 def get_all_templates():
     """Получить все шаблоны с фильтрацией"""
@@ -133,7 +373,7 @@ def get_all_templates():
         doc_type = request.args.get('doc_type')
         search = request.args.get('search', '')
         
-        conn = get_db_connection()
+        db = get_db()
         
         query = '''
             SELECT t.id, t.name, t.description, t.doc_type, t.word_count, t.popularity,
@@ -158,8 +398,7 @@ def get_all_templates():
         
         query += ' ORDER BY t.popularity DESC, t.name'
         
-        templates = conn.execute(query, params).fetchall()
-        conn.close()
+        templates = db.execute(query, params).fetchall()
         
         templates_list = []
         for template in templates:
@@ -181,13 +420,14 @@ def get_all_templates():
     except Exception as e:
         return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
 
+
 @app.route('/api/templates/<int:template_id>', methods=['GET'])
 def get_template_detail(template_id):
     """Получить детальную информацию о шаблоне"""
     try:
-        conn = get_db_connection()
+        db = get_db()
         
-        template = conn.execute('''
+        template = db.execute('''
             SELECT t.*, c.name as category_name 
             FROM templates t 
             LEFT JOIN categories c ON t.category_id = c.id 
@@ -198,8 +438,8 @@ def get_template_detail(template_id):
             return jsonify({'error': 'Шаблон не найден'}), 404
         
         # Увеличиваем счетчик популярности
-        conn.execute('UPDATE templates SET popularity = popularity + 1 WHERE id = ?', (template_id,))
-        conn.commit()
+        db.execute('UPDATE templates SET popularity = popularity + 1 WHERE id = ?', (template_id,))
+        db.commit()
         
         template_data = {
             'id': template['id'],
@@ -213,8 +453,6 @@ def get_template_detail(template_id):
             'created_at': template['created_at']
         }
         
-        conn.close()
-        
         return jsonify({
             'success': True,
             'template': template_data
@@ -223,13 +461,15 @@ def get_template_detail(template_id):
     except Exception as e:
         return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
 
+
 @app.route('/api/templates/<int:template_id>/fields', methods=['GET'])
+@login_required
 def get_template_fields(template_id):
     """Получить поля шаблона"""
     try:
-        conn = get_db_connection()
+        db = get_db()
         
-        template = conn.execute(
+        template = db.execute(
             'SELECT id, name FROM templates WHERE id = ?', 
             (template_id,)
         ).fetchone()
@@ -237,7 +477,7 @@ def get_template_fields(template_id):
         if not template:
             return jsonify({'error': 'Шаблон не найден'}), 404
         
-        fields = conn.execute('''
+        fields = db.execute('''
             SELECT 
                 field_key, 
                 field_label, 
@@ -253,14 +493,8 @@ def get_template_fields(template_id):
             WHERE template_id = ? 
             ORDER BY order_index, id
         ''', (template_id,)).fetchall()
-        conn.close()
         
-        response = {
-            'success': True,
-            'template_id': template_id,
-            'template_name': template['name'],
-            'fields': []
-        }
+        response_fields = []
         
         for field in fields:
             field_data = {
@@ -286,19 +520,28 @@ def get_template_fields(template_id):
                 except:
                     field_data['options'] = []
             
-            response['fields'].append(field_data)
+            response_fields.append(field_data)
+        
+        response_data = {
+            'success': True,
+            'template_id': template_id,
+            'template_name': template['name'],
+            'fields': response_fields
+        }
         
         return Response(
-            json.dumps(response, ensure_ascii=False, indent=2),
+            json.dumps(response_data, ensure_ascii=False, indent=2),
             mimetype='application/json; charset=utf-8'
         )
         
     except Exception as e:
         return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
 
+
 @app.route('/api/documents/generate', methods=['POST'])
+@login_required
 def generate_document():
-    """Сгенерировать документ на основе шаблона и данных"""
+    """Сгенерировать документ"""
     try:
         data = request.get_json()
         
@@ -311,21 +554,28 @@ def generate_document():
         fields_data = data['fields']
         document_name = data.get('document_name', '')
         
-        conn = get_db_connection()
+        user = get_current_user()
+        if not user:
+            error_data = {'error': 'Требуется аутентификация'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 401
         
-        template = conn.execute(
+        user_id = user['id']
+        
+        db = get_db()
+        
+        template = db.execute(
             'SELECT id, name FROM templates WHERE id = ?', 
             (template_id,)
         ).fetchone()
         
         if not template:
-            conn.close()
             error_data = {'error': 'Шаблон не найден'}
             error_response = json.dumps(error_data, ensure_ascii=False)
             return Response(error_response, mimetype='application/json; charset=utf-8'), 404
         
         # Валидация полей
-        template_fields = conn.execute(
+        template_fields = db.execute(
             'SELECT field_key, field_type, is_required FROM template_fields WHERE template_id = ?',
             (template_id,)
         ).fetchall()
@@ -333,79 +583,78 @@ def generate_document():
         required_fields = [field['field_key'] for field in template_fields if field['is_required']]
         for req_field in required_fields:
             if req_field not in fields_data or not fields_data[req_field]:
-                conn.close()
                 error_data = {'error': f'Обязательное поле "{req_field}" не заполнено'}
                 error_response = json.dumps(error_data, ensure_ascii=False)
                 return Response(error_response, mimetype='application/json; charset=utf-8'), 400
         
         # Сохраняем документ
-        cursor = conn.cursor()
-        if not document_name:
-            document_name = f"{template['name']} от {datetime.now().strftime('%d.%m.%Y')}"
-        
-        cursor.execute('''
-            INSERT INTO filled_documents (template_id, document_name, document_data, status)
-            VALUES (?, ?, ?, ?)
-        ''', (template_id, document_name, json.dumps(fields_data, ensure_ascii=False), 'generated'))
-        
-        document_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        
-        response_data = {
-            'success': True,
-            'document_id': document_id,
-            'document_name': document_name,
-            'message': 'Документ успешно создан',
-            'template_name': template['name'],
-            'generated_at': datetime.now().isoformat(),
-            'view_url': f'/documents/{document_id}',
-            'download_url': f'/api/documents/{document_id}/download'
-        }
-        
-        response = json.dumps(response_data, ensure_ascii=False)
-        return Response(response, mimetype='application/json; charset=utf-8')
+        try:
+            db.execute('BEGIN TRANSACTION')
+            
+            if not document_name:
+                document_name = f"{template['name']} от {datetime.now().strftime('%d.%m.%Y')}"
+            
+            cursor = db.execute('''
+                INSERT INTO filled_documents (template_id, user_id, document_name, document_data, status)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (template_id, user_id, document_name, json.dumps(fields_data, ensure_ascii=False), 'generated'))
+            
+            document_id = cursor.lastrowid
+            db.commit()
+            
+            response_data = {
+                'success': True,
+                'document_id': document_id,
+                'document_name': document_name,
+                'message': 'Документ успешно создан',
+                'template_name': template['name'],
+                'generated_at': datetime.now().isoformat(),
+                'view_url': f'/documents/{document_id}',
+                'download_url': f'/api/documents/{document_id}/download'
+            }
+            
+            response = json.dumps(response_data, ensure_ascii=False)
+            return Response(response, mimetype='application/json; charset=utf-8')
+            
+        except Exception as e:
+            db.rollback()
+            error_data = {'error': f'Ошибка базы данных: {str(e)}'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 500
         
     except Exception as e:
         error_data = {'error': f'Ошибка при создании документа: {str(e)}'}
         error_response = json.dumps(error_data, ensure_ascii=False)
         return Response(error_response, mimetype='application/json; charset=utf-8'), 500
 
-# ==================== API FOR DOCUMENTS ====================
 
 @app.route('/api/documents', methods=['GET'])
+@login_required
 def get_documents():
     """Получить список созданных документов"""
     try:
-        conn = get_db_connection()
+        user = get_current_user()
+        if not user:
+            error_data = {'error': 'Требуется аутентификация'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 401
         
-        # Проверяем существование таблицы
-        try:
-            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='filled_documents'")
-            if not cursor.fetchone():
-                conn.close()
-                response_data = {
-                    'success': True,
-                    'documents': [],
-                    'count': 0,
-                    'message': 'Таблица документов пока не создана'
-                }
-                response = json.dumps(response_data, ensure_ascii=False)
-                return Response(response, mimetype='application/json; charset=utf-8')
-        except:
-            pass
+        user_id = user['id']
         
-        # Получаем документы
-        documents = conn.execute('''
+        db = get_db()
+        
+        # Показываем только документы текущего пользователя
+        query = '''
             SELECT fd.id, fd.template_id, fd.document_name, fd.created_at, fd.status,
                    t.name as template_name
             FROM filled_documents fd
             LEFT JOIN templates t ON fd.template_id = t.id
+            WHERE fd.user_id = ?
             ORDER BY fd.created_at DESC
             LIMIT 50
-        ''').fetchall()
+        '''
         
-        conn.close()
+        documents = db.execute(query, (user_id,)).fetchall()
         
         documents_list = []
         for doc in documents:
@@ -437,56 +686,87 @@ def get_documents():
         error_response = json.dumps(error_data, ensure_ascii=False)
         return Response(error_response, mimetype='application/json; charset=utf-8'), 500
 
+
 @app.route('/api/documents/<int:document_id>', methods=['DELETE'])
+@login_required
 def delete_document(document_id):
     """Удалить документ"""
     try:
-        conn = get_db_connection()
+        user = get_current_user()
+        if not user:
+            error_data = {'error': 'Требуется аутентификация'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 401
+        
+        db = get_db()
         
         # Проверяем существование документа
-        document = conn.execute('SELECT id FROM filled_documents WHERE id = ?', (document_id,)).fetchone()
+        document = db.execute(
+            'SELECT id, user_id FROM filled_documents WHERE id = ?', 
+            (document_id,)
+        ).fetchone()
         
         if not document:
-            conn.close()
             error_data = {'error': 'Документ не найден'}
             error_response = json.dumps(error_data, ensure_ascii=False)
             return Response(error_response, mimetype='application/json; charset=utf-8'), 404
         
+        # Проверяем права доступа (только свои документы)
+        if document['user_id'] != user['id']:
+            error_data = {'error': 'Нет прав для удаления этого документа'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 403
+        
         # Удаляем документ
-        conn.execute('DELETE FROM filled_documents WHERE id = ?', (document_id,))
-        conn.commit()
-        conn.close()
-        
-        response_data = {
-            'success': True,
-            'message': 'Документ успешно удален',
-            'document_id': document_id
-        }
-        
-        response = json.dumps(response_data, ensure_ascii=False)
-        return Response(response, mimetype='application/json; charset=utf-8')
+        try:
+            db.execute('BEGIN TRANSACTION')
+            db.execute('DELETE FROM filled_documents WHERE id = ?', (document_id,))
+            db.commit()
+            
+            response_data = {
+                'success': True,
+                'message': 'Документ успешно удален',
+                'document_id': document_id
+            }
+            
+            response = json.dumps(response_data, ensure_ascii=False)
+            return Response(response, mimetype='application/json; charset=utf-8')
+            
+        except Exception as e:
+            db.rollback()
+            error_data = {'error': f'Ошибка базы данных: {str(e)}'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 500
         
     except Exception as e:
         error_data = {'error': f'Ошибка при удалении документа: {str(e)}'}
         error_response = json.dumps(error_data, ensure_ascii=False)
         return Response(error_response, mimetype='application/json; charset=utf-8'), 500
-    
+
+
 @app.route('/api/documents/<int:document_id>/download', methods=['GET'])
+@login_required
 def download_document(document_id):
-    """Скачать документ в формате JSON"""
+    """Скачать документ"""
     try:
-        conn = get_db_connection()
+        user = get_current_user()
+        if not user:
+            error_data = {'error': 'Требуется аутентификация'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 401
         
-        document = conn.execute('''
+        db = get_db()
+        
+        # Ищем документ только текущего пользователя
+        document = db.execute('''
             SELECT fd.*, t.name as template_name
             FROM filled_documents fd
             JOIN templates t ON fd.template_id = t.id
-            WHERE fd.id = ?
-        ''', (document_id,)).fetchone()
+            WHERE fd.id = ? AND fd.user_id = ?
+        ''', (document_id, user['id'])).fetchone()
         
         if not document:
-            conn.close()
-            error_data = {'error': 'Документ не найден'}
+            error_data = {'error': 'Документ не найден или нет прав доступа'}
             error_response = json.dumps(error_data, ensure_ascii=False)
             return Response(error_response, mimetype='application/json; charset=utf-8'), 404
         
@@ -506,8 +786,6 @@ def download_document(document_id):
             }
         }
         
-        conn.close()
-        
         # Создаем имя файла
         filename = f"{document['document_name']}_{document['id']}.json"
         filename = filename.replace(' ', '_').replace('/', '_')
@@ -526,30 +804,36 @@ def download_document(document_id):
         error_data = {'error': f'Ошибка сервера: {str(e)}'}
         error_response = json.dumps(error_data, ensure_ascii=False)
         return Response(error_response, mimetype='application/json; charset=utf-8'), 500
-    
+
+
 @app.route('/api/documents/<int:document_id>/view', methods=['GET'])
+@login_required
 def view_document(document_id):
-    """Просмотреть документ в HTML формате"""
+    """Просмотреть документ"""
     try:
-        conn = get_db_connection()
+        user = get_current_user()
+        if not user:
+            error_data = {'error': 'Требуется аутентификация'}
+            error_response = json.dumps(error_data, ensure_ascii=False)
+            return Response(error_response, mimetype='application/json; charset=utf-8'), 401
         
-        document = conn.execute('''
+        db = get_db()
+        
+        # Ищем документ только текущего пользователя
+        document = db.execute('''
             SELECT fd.*, t.name as template_name, t.description as template_description
             FROM filled_documents fd
             JOIN templates t ON fd.template_id = t.id
-            WHERE fd.id = ?
-        ''', (document_id,)).fetchone()
+            WHERE fd.id = ? AND fd.user_id = ?
+        ''', (document_id, user['id'])).fetchone()
         
         if not document:
-            conn.close()
-            error_data = {'error': 'Документ не найден'}
+            error_data = {'error': 'Документ не найден или нет прав доступа'}
             error_response = json.dumps(error_data, ensure_ascii=False)
             return Response(error_response, mimetype='application/json; charset=utf-8'), 404
         
         # Парсим данные документа
         document_data = json.loads(document['document_data'])
-        
-        conn.close()
         
         # Генерируем HTML для просмотра
         html_content = f'''
@@ -576,16 +860,18 @@ def view_document(document_id):
                 <h1>{document['document_name']}</h1>
                 <p>Шаблон: {document['template_name']}</p>
                 <p>Создан: {document['created_at']}</p>
+                <p>Владелец: {user['username']}</p>
             </div>
             
             <div class="document-info">
                 <h2>Заполненные данные:</h2>
         '''
         
+        # Добавляем каждое поле документа
         for key, value in document_data.items():
             html_content += f'''
                 <div class="field">
-                    <div class="field-label">{key}</div>
+                    <div class="field-label">{key}:</div>
                     <div class="field-value">{value}</div>
                 </div>
             '''
@@ -594,21 +880,9 @@ def view_document(document_id):
             </div>
             
             <div class="actions">
-                <a href="/api/documents/{document_id}/download" class="btn btn-download">📥 Скачать JSON</a>
-                <a href="/documents" class="btn">← К списку документов</a>
-                <button onclick="window.print()" class="btn">🖨️ Печать</button>
+                <a href="/api/documents/{document_id}/download" class="btn btn-download">Скачать JSON</a>
+                <a href="/documents" class="btn">Вернуться к списку</a>
             </div>
-            
-            <script>
-                // Автоматическое форматирование дат
-                document.querySelectorAll('.field-value').forEach(el => {{
-                    const text = el.textContent;
-                    if (text.match(/^\\d{{4}}-\\d{{2}}-\\d{{2}}$/)) {{
-                        const date = new Date(text);
-                        el.textContent = date.toLocaleDateString('ru-RU');
-                    }}
-                }});
-            </script>
         </body>
         </html>
         '''
@@ -616,376 +890,370 @@ def view_document(document_id):
         return Response(html_content, mimetype='text/html; charset=utf-8')
         
     except Exception as e:
-        error_html = f'''
-        <html>
-        <head><title>Ошибка</title></head>
-        <body>
-            <h1>Ошибка</h1>
-            <p>{str(e)}</p>
-            <a href="/documents">Вернуться к документам</a>
-        </body>
-        </html>
-        '''
-        return Response(error_html, mimetype='text/html; charset=utf-8'), 500
-    
-@app.route('/documents')
-def documents_page():
-    """Страница с созданными документами"""
-    return render_template('documents.html')
+        error_data = {'error': f'Ошибка сервера: {str(e)}'}
+        error_response = json.dumps(error_data, ensure_ascii=False)
+        return Response(error_response, mimetype='application/json; charset=utf-8'), 500
 
 
-@app.route('/api/statistics', methods=['GET'])
-def get_statistics():
-    """Получить статистику по использованию"""
+@app.route('/api/stats/dashboard', methods=['GET'])
+@login_required
+def get_dashboard_stats():
+    """Получить статистику для dashboard"""
     try:
-        conn = get_db_connection()
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Пользователь не найден'}), 404
         
-        total_templates = conn.execute('SELECT COUNT(*) as count FROM templates').fetchone()['count']
-        total_documents = conn.execute('SELECT COUNT(*) as count FROM filled_documents').fetchone()['count']
+        db = get_db()
         
-        popular_templates = conn.execute('''
-            SELECT id, name, popularity 
-            FROM templates 
-            ORDER BY popularity DESC 
-            LIMIT 5
-        ''').fetchall()
+        # Личная статистика пользователя
+        user_stats = db.execute('''
+            SELECT 
+                COUNT(*) as total_documents,
+                COUNT(DISTINCT template_id) as unique_templates,
+                SUM(CASE WHEN DATE(created_at) = DATE('now') THEN 1 ELSE 0 END) as today_documents,
+                SUM(CASE WHEN DATE(created_at) = DATE('now', '-1 day') THEN 1 ELSE 0 END) as yesterday_documents
+            FROM filled_documents 
+            WHERE user_id = ?
+        ''', (user['id'],)).fetchone()
         
-        recent_documents = conn.execute('''
-            SELECT fd.id, t.name, fd.created_at 
+        # Последние документы пользователя
+        recent_docs = db.execute('''
+            SELECT fd.id, fd.document_name, fd.created_at, t.name as template_name
             FROM filled_documents fd
             JOIN templates t ON fd.template_id = t.id
-            ORDER BY fd.created_at DESC 
+            WHERE fd.user_id = ?
+            ORDER BY fd.created_at DESC
             LIMIT 5
-        ''').fetchall()
+        ''', (user['id'],)).fetchall()
         
-        conn.close()
+        # Популярные шаблоны пользователя
+        popular_templates = db.execute('''
+            SELECT t.name, COUNT(fd.id) as usage_count
+            FROM filled_documents fd
+            JOIN templates t ON fd.template_id = t.id
+            WHERE fd.user_id = ?
+            GROUP BY t.id
+            ORDER BY usage_count DESC
+            LIMIT 5
+        ''', (user['id'],)).fetchall()
         
-        return jsonify({
-            'success': True,
-            'statistics': {
-                'total_templates': total_templates,
-                'total_documents': total_documents,
-                'popular_templates': [
-                    {'id': t['id'], 'name': t['name'], 'popularity': t['popularity']}
-                    for t in popular_templates
-                ],
+        # Глобальная статистика
+        global_stats = db.execute('''
+            SELECT 
+                (SELECT COUNT(*) FROM users) as total_users,
+                (SELECT COUNT(*) FROM templates) as total_templates,
+                (SELECT COUNT(*) FROM filled_documents) as total_documents,
+                (SELECT COUNT(*) FROM filled_documents WHERE DATE(created_at) = DATE('now')) as today_total_docs
+        ''').fetchone()
+        
+        stats = {
+            'user': {
+                'total_documents': user_stats['total_documents'] or 0,
+                'unique_templates': user_stats['unique_templates'] or 0,
+                'today_documents': user_stats['today_documents'] or 0,
+                'yesterday_documents': user_stats['yesterday_documents'] or 0,
                 'recent_documents': [
-                    {'id': d['id'], 'name': d['name'], 'created_at': d['created_at']}
-                    for d in recent_documents
+                    {
+                        'id': doc['id'],
+                        'name': doc['document_name'] or f"Документ {doc['id']}",
+                        'template': doc['template_name'],
+                        'created_at': doc['created_at']
+                    } for doc in recent_docs
+                ],
+                'popular_templates': [
+                    {
+                        'name': tpl['name'],
+                        'usage_count': tpl['usage_count']
+                    } for tpl in popular_templates
                 ]
+            },
+            'global': {
+                'total_users': global_stats['total_users'],
+                'total_templates': global_stats['total_templates'],
+                'total_documents': global_stats['total_documents'],
+                'today_total_docs': global_stats['today_total_docs'] or 0
             }
-        })
-    except Exception as e:
-        return jsonify({'error': f'Ошибка сервера: {str(e)}'}), 500
-
-@app.route('/api/admin/seed', methods=['POST'])
-def seed_database():
-    """Заполнить базу данных начальными данными"""
-    try:
-        conn = get_db_connection()
-        
-        # Очищаем таблицы
-        conn.execute('DELETE FROM template_fields')
-        conn.execute('DELETE FROM templates')
-        conn.execute('DELETE FROM categories')
-        
-        # Добавляем категории
-        categories = [
-            ('Договоры', 'Юридические договоры различных типов'),
-            ('Заявления', 'Официальные заявления'),
-            ('Исковые заявления', 'Документы для подачи в суд'),
-            ('Соглашения и расторжения', 'Дополнительные соглашения и расторжения договоров'),
-            ('Акты', 'Акты приема-передачи и другие акты'),
-            ('Доверенности', 'Доверенности различного назначения'),
-            ('Приказы', 'Организационно-распорядительные документы'),
-            ('Прочее', 'Прочие документы')
-        ]
-        
-        category_ids = {}
-        for name, desc in categories:
-            cursor = conn.execute('INSERT INTO categories (name, description) VALUES (?, ?)', (name, desc))
-            category_ids[name] = cursor.lastrowid
-        
-        # 10 КЛЮЧЕВЫХ ШАБЛОНОВ
-        templates_data = [
-            # 1. Самый популярный - Договор аренды квартиры
-            {
-                'name': 'Образец договора аренды квартиры с мебелью и бытовой техникой',
-                'category': 'Договоры',
-                'type': 'Договор',
-                'word_count': 149900,
-                'description': 'Полный договор аренды квартиры с мебелью и техникой для длительной аренды',
-                'fields': [
-                    {'key': 'landlord_name', 'label': 'ФИО Арендодателя', 'type': 'text', 'required': True, 'placeholder': 'Иванов Иван Иванович'},
-                    {'key': 'landlord_passport', 'label': 'Паспортные данные Арендодателя', 'type': 'text', 'required': True, 'placeholder': 'Серия 1234 №567890 выдан ОВД района'},
-                    {'key': 'tenant_name', 'label': 'ФИО Арендатора', 'type': 'text', 'required': True, 'placeholder': 'Петров Петр Петрович'},
-                    {'key': 'tenant_passport', 'label': 'Паспортные данные Арендатора', 'type': 'text', 'required': True, 'placeholder': 'Серия 4321 №098765 выдан ОВД района'},
-                    {'key': 'address', 'label': 'Адрес квартиры', 'type': 'text', 'required': True, 'placeholder': 'г. Москва, ул. Ленина, д. 1, кв. 1'},
-                    {'key': 'apartment_area', 'label': 'Площадь квартиры (кв.м.)', 'type': 'number', 'required': True, 'min': 10, 'max': 500},
-                    {'key': 'rooms_count', 'label': 'Количество комнат', 'type': 'number', 'required': True, 'min': 1, 'max': 10},
-                    {'key': 'rent_amount', 'label': 'Сумма аренды (руб./мес.)', 'type': 'number', 'required': True, 'min': 1000, 'max': 1000000},
-                    {'key': 'start_date', 'label': 'Дата начала аренды', 'type': 'date', 'required': True},
-                    {'key': 'end_date', 'label': 'Дата окончания аренды', 'type': 'date', 'required': True},
-                    {'key': 'deposit', 'label': 'Залог (руб.)', 'type': 'number', 'required': False, 'min': 0},
-                    {'key': 'utilities_included', 'label': 'Коммунальные услуги включены', 'type': 'boolean', 'required': False}
-                ]
-            },
-            
-            # 2. Договор купли-продажи авто - очень популярен
-            {
-                'name': 'Договор купли-продажи транспортного средства',
-                'category': 'Договоры',
-                'type': 'Договор',
-                'word_count': 20017,
-                'description': 'Договор купли-продажи автомобиля между физическими лицами',
-                'fields': [
-                    {'key': 'seller_name', 'label': 'ФИО Продавца', 'type': 'text', 'required': True, 'placeholder': 'Сидоров Алексей Владимирович'},
-                    {'key': 'seller_passport', 'label': 'Паспортные данные Продавца', 'type': 'text', 'required': True, 'placeholder': 'Серия 1111 №222222'},
-                    {'key': 'buyer_name', 'label': 'ФИО Покупателя', 'type': 'text', 'required': True, 'placeholder': 'Кузнецов Дмитрий Сергеевич'},
-                    {'key': 'buyer_passport', 'label': 'Паспортные данные Покупателя', 'type': 'text', 'required': True, 'placeholder': 'Серия 3333 №444444'},
-                    {'key': 'car_brand', 'label': 'Марка автомобиля', 'type': 'text', 'required': True, 'placeholder': 'Toyota'},
-                    {'key': 'car_model', 'label': 'Модель автомобиля', 'type': 'text', 'required': True, 'placeholder': 'Camry'},
-                    {'key': 'car_year', 'label': 'Год выпуска', 'type': 'number', 'required': True, 'min': 1980, 'max': 2024},
-                    {'key': 'vin', 'label': 'VIN номер', 'type': 'text', 'required': True, 'placeholder': 'JTDBR32E160123456'},
-                    {'key': 'state_number', 'label': 'Государственный номер', 'type': 'text', 'required': True, 'placeholder': 'А123БВ77'},
-                    {'key': 'price', 'label': 'Цена (руб.)', 'type': 'number', 'required': True, 'min': 1000, 'max': 10000000},
-                    {'key': 'sale_date', 'label': 'Дата продажи', 'type': 'date', 'required': True},
-                    {'key': 'payment_method', 'label': 'Способ оплаты', 'type': 'select', 'required': True, 
-                     'options': ['Наличные', 'Банковский перевод', 'Другое']}
-                ]
-            },
-            
-            # 3. Трудовой договор - базовый документ
-            {
-                'name': 'Образец трудового договора',
-                'category': 'Договоры',
-                'type': 'Договор',
-                'word_count': 79545,
-                'description': 'Стандартный трудовой договор между работодателем и работником',
-                'fields': [
-                    {'key': 'employer_name', 'label': 'Наименование работодателя', 'type': 'text', 'required': True, 'placeholder': 'ООО "Ромашка"'},
-                    {'key': 'employer_details', 'label': 'Реквизиты работодателя', 'type': 'textarea', 'required': True, 'placeholder': 'ИНН 1234567890, ОГРН 1234567890123'},
-                    {'key': 'employee_name', 'label': 'ФИО работника', 'type': 'text', 'required': True, 'placeholder': 'Смирнова Анна Петровна'},
-                    {'key': 'employee_passport', 'label': 'Паспортные данные работника', 'type': 'text', 'required': True},
-                    {'key': 'position', 'label': 'Должность', 'type': 'text', 'required': True, 'placeholder': 'Менеджер по продажам'},
-                    {'key': 'department', 'label': 'Отдел/подразделение', 'type': 'text', 'required': True, 'placeholder': 'Отдел продаж'},
-                    {'key': 'salary', 'label': 'Оклад (руб.)', 'type': 'number', 'required': True, 'min': 16242, 'max': 1000000},
-                    {'key': 'start_date', 'label': 'Дата начала работы', 'type': 'date', 'required': True},
-                    {'key': 'contract_type', 'label': 'Вид договора', 'type': 'select', 'required': True,
-                     'options': ['Бессрочный', 'Срочный (до 5 лет)', 'Сезонный', 'На время выполнения работы']},
-                    {'key': 'probation_period', 'label': 'Испытательный срок (месяцев)', 'type': 'number', 'required': False, 'min': 0, 'max': 6},
-                    {'key': 'work_schedule', 'label': 'График работы', 'type': 'select', 'required': True,
-                     'options': ['5/2', '6/1', 'Сменный', 'Гибкий']}
-                ]
-            },
-            
-            # 4. Заявление на отпуск - самое популярное заявление
-            {
-                'name': 'Образец заявления на оплачиваемый отпуск',
-                'category': 'Заявления',
-                'type': 'Заявление',
-                'word_count': 15284,
-                'description': 'Заявление на ежегодный оплачиваемый отпуск',
-                'fields': [
-                    {'key': 'to_director', 'label': 'Кому (должность, ФИО)', 'type': 'text', 'required': True, 'placeholder': 'Генеральному директору ООО "Ромашка" Иванову И.И.'},
-                    {'key': 'employee_name', 'label': 'От кого (ФИО сотрудника)', 'type': 'text', 'required': True, 'placeholder': 'Петрова Мария Сергеевна'},
-                    {'key': 'position', 'label': 'Должность', 'type': 'text', 'required': True, 'placeholder': 'Менеджер'},
-                    {'key': 'department', 'label': 'Отдел', 'type': 'text', 'required': True, 'placeholder': 'Отдел маркетинга'},
-                    {'key': 'vacation_start', 'label': 'Дата начала отпуска', 'type': 'date', 'required': True},
-                    {'key': 'vacation_end', 'label': 'Дата окончания отпуска', 'type': 'date', 'required': True},
-                    {'key': 'vacation_days', 'label': 'Количество календарных дней', 'type': 'number', 'required': True, 'min': 1, 'max': 60},
-                    {'key': 'vacation_type', 'label': 'Тип отпуска', 'type': 'select', 'required': True,
-                     'options': ['Ежегодный оплачиваемый', 'Без сохранения зарплаты', 'Учебный', 'По беременности и родам']},
-                    {'key': 'application_date', 'label': 'Дата заявления', 'type': 'date', 'required': True},
-                    {'key': 'phone', 'label': 'Контактный телефон', 'type': 'phone', 'required': False, 'placeholder': '+7 (999) 123-45-67'}
-                ]
-            },
-            
-            # 5. Договор подряда - популярен для разовых работ
-            {
-                'name': 'Образец договора подряда, заключаемого между юридическим и физическим лицом',
-                'category': 'Договоры',
-                'type': 'Договор',
-                'word_count': 217729,
-                'description': 'Договор подряда на выполнение работ между компанией и физическим лицом',
-                'fields': [
-                    {'key': 'customer_name', 'label': 'Наименование Заказчика (компания)', 'type': 'text', 'required': True, 'placeholder': 'ООО "СтройГарант"'},
-                    {'key': 'customer_details', 'label': 'Реквизиты Заказчика', 'type': 'textarea', 'required': True},
-                    {'key': 'contractor_name', 'label': 'ФИО Подрядчика', 'type': 'text', 'required': True},
-                    {'key': 'contractor_passport', 'label': 'Паспортные данные Подрядчика', 'type': 'text', 'required': True},
-                    {'key': 'work_description', 'label': 'Описание работ', 'type': 'textarea', 'required': True, 'placeholder': 'Ремонт офисного помещения'},
-                    {'key': 'work_address', 'label': 'Адрес выполнения работ', 'type': 'text', 'required': True},
-                    {'key': 'start_date', 'label': 'Дата начала работ', 'type': 'date', 'required': True},
-                    {'key': 'end_date', 'label': 'Дата окончания работ', 'type': 'date', 'required': True},
-                    {'key': 'contract_price', 'label': 'Цена договора (руб.)', 'type': 'number', 'required': True, 'min': 1000},
-                    {'key': 'advance_payment', 'label': 'Аванс (руб.)', 'type': 'number', 'required': False, 'min': 0},
-                    {'key': 'payment_schedule', 'label': 'График платежей', 'type': 'textarea', 'required': False, 'placeholder': '50% - аванс, 50% - после приемки работ'}
-                ]
-            },
-            
-            # 6. Исковое заявление о взыскании алиментов
-            {
-                'name': 'Образец искового заявления о взыскании алиментов на ребенка',
-                'category': 'Исковые заявления',
-                'type': 'Исковое заявление',
-                'word_count': 52892,
-                'description': 'Исковое заявление о взыскании алиментов на несовершеннолетнего ребенка',
-                'fields': [
-                    {'key': 'court_name', 'label': 'Наименование суда', 'type': 'text', 'required': True, 'placeholder': 'Мировой суд судебного участка №1'},
-                    {'key': 'plaintiff_name', 'label': 'ФИО Истца (получателя алиментов)', 'type': 'text', 'required': True},
-                    {'key': 'plaintiff_address', 'label': 'Адрес Истца', 'type': 'text', 'required': True},
-                    {'key': 'plaintiff_phone', 'label': 'Телефон Истца', 'type': 'phone', 'required': True},
-                    {'key': 'defendant_name', 'label': 'ФИО Ответчика (плательщика алиментов)', 'type': 'text', 'required': True},
-                    {'key': 'defendant_address', 'label': 'Адрес Ответчика', 'type': 'text', 'required': True},
-                    {'key': 'child_name', 'label': 'ФИО ребенка', 'type': 'text', 'required': True},
-                    {'key': 'child_birthdate', 'label': 'Дата рождения ребенка', 'type': 'date', 'required': True},
-                    {'key': 'child_birth_certificate', 'label': 'Свидетельство о рождении', 'type': 'text', 'required': True, 'placeholder': 'серия II-АБ №123456'},
-                    {'key': 'marriage_status', 'label': 'Брак зарегистрирован', 'type': 'boolean', 'required': True},
-                    {'key': 'alimony_amount', 'label': 'Размер алиментов', 'type': 'select', 'required': True,
-                     'options': ['1/4 заработка', '1/3 заработка', '1/2 заработка', 'Твердая денежная сумма']},
-                    {'key': 'request', 'label': 'Прошу взыскать', 'type': 'textarea', 'required': True, 
-                     'placeholder': 'Взыскать с Ответчика алименты на содержание ребенка...'}
-                ]
-            },
-            
-            # 7. Доверенность в налоговую
-            {
-                'name': 'Образец доверенности в налоговую от юридического лица',
-                'category': 'Доверенности',
-                'type': 'Доверенность',
-                'word_count': 7894,
-                'description': 'Доверенность на представление интересов компании в налоговой инспекции',
-                'fields': [
-                    {'key': 'company_name', 'label': 'Наименование организации', 'type': 'text', 'required': True, 'placeholder': 'ООО "Вектор"'},
-                    {'key': 'company_details', 'label': 'Реквизиты организации', 'type': 'textarea', 'required': True, 'placeholder': 'ИНН 1234567890, ОГРН 1234567890123, адрес: г. Москва...'},
-                    {'key': 'director_name', 'label': 'ФИО руководителя', 'type': 'text', 'required': True, 'placeholder': 'Генеральный директор Иванов И.И.'},
-                    {'key': 'trustee_name', 'label': 'ФИО доверенного лица', 'type': 'text', 'required': True},
-                    {'key': 'trustee_passport', 'label': 'Паспортные данные доверенного лица', 'type': 'text', 'required': True},
-                    {'key': 'tax_office', 'label': 'Наименование налоговой инспекции', 'type': 'text', 'required': True, 'placeholder': 'ИФНС России №1 по г. Москве'},
-                    {'key': 'purpose', 'label': 'Цель доверенности', 'type': 'textarea', 'required': True, 
-                     'placeholder': 'Представлять интересы организации, подавать документы, получать документы...'},
-                    {'key': 'validity_period', 'label': 'Срок действия (месяцев)', 'type': 'number', 'required': True, 'min': 1, 'max': 36},
-                    {'key': 'issue_date', 'label': 'Дата выдачи доверенности', 'type': 'date', 'required': True},
-                    {'key': 'with_right_of_substitution', 'label': 'С правом передоверия', 'type': 'boolean', 'required': False}
-                ]
-            },
-            
-            # 8. Расторжение договора по соглашению сторон
-            {
-                'name': 'Образец расторжения договора по соглашению сторон',
-                'category': 'Соглашения и расторжения',
-                'type': 'Расторжение',
-                'word_count': 35118,
-                'description': 'Соглашение о расторжении договора по взаимному согласию сторон',
-                'fields': [
-                    {'key': 'original_contract_number', 'label': 'Номер расторгаемого договора', 'type': 'text', 'required': True, 'placeholder': '№123 от 01.01.2023'},
-                    {'key': 'original_contract_date', 'label': 'Дата расторгаемого договора', 'type': 'date', 'required': True},
-                    {'key': 'party1_name', 'label': 'Наименование Стороны 1', 'type': 'text', 'required': True},
-                    {'key': 'party1_details', 'label': 'Реквизиты Стороны 1', 'type': 'textarea', 'required': True},
-                    {'key': 'party2_name', 'label': 'Наименование Стороны 2', 'type': 'text', 'required': True},
-                    {'key': 'party2_details', 'label': 'Реквизиты Стороны 2', 'type': 'textarea', 'required': True},
-                    {'key': 'termination_date', 'label': 'Дата расторжения договора', 'type': 'date', 'required': True},
-                    {'key': 'termination_reason', 'label': 'Причина расторжения', 'type': 'textarea', 'required': True, 
-                     'placeholder': 'По взаимному согласию сторон в связи с...'},
-                    {'key': 'mutual_settlements', 'label': 'Взаиморасчеты произведены', 'type': 'boolean', 'required': True},
-                    {'key': 'no_claims', 'label': 'Стороны претензий друг к другу не имеют', 'type': 'boolean', 'required': True},
-                    {'key': 'signature_date', 'label': 'Дата подписания соглашения', 'type': 'date', 'required': True}
-                ]
-            },
-            
-            # 9. Акт приема-передачи автомобиля
-            {
-                'name': 'Образец акта приема-передачи автомобиля (простой)',
-                'category': 'Акты',
-                'type': 'Акт',
-                'word_count': 22754,
-                'description': 'Акт приема-передачи транспортного средства',
-                'fields': [
-                    {'key': 'act_number', 'label': 'Номер акта', 'type': 'text', 'required': True, 'placeholder': 'АКТ-1'},
-                    {'key': 'act_date', 'label': 'Дата составления акта', 'type': 'date', 'required': True},
-                    {'key': 'transferor_name', 'label': 'ФИО передающего', 'type': 'text', 'required': True},
-                    {'key': 'transferee_name', 'label': 'ФИО принимающего', 'type': 'text', 'required': True},
-                    {'key': 'car_brand', 'label': 'Марка автомобиля', 'type': 'text', 'required': True},
-                    {'key': 'car_model', 'label': 'Модель автомобиля', 'type': 'text', 'required': True},
-                    {'key': 'car_year', 'label': 'Год выпуска', 'type': 'number', 'required': True},
-                    {'key': 'vin', 'label': 'VIN номер', 'type': 'text', 'required': True},
-                    {'key': 'state_number', 'label': 'Государственный номер', 'type': 'text', 'required': True},
-                    {'key': 'mileage', 'label': 'Пробег (км)', 'type': 'number', 'required': True, 'min': 0},
-                    {'key': 'condition_description', 'label': 'Описание состояния', 'type': 'textarea', 'required': True, 
-                     'placeholder': 'Автомобиль передан в исправном техническом состоянии...'},
-                    {'key': 'documents_list', 'label': 'Передаваемые документы', 'type': 'textarea', 'required': True,
-                     'placeholder': 'ПТС, СТС, ключи (2 шт.), сервисная книжка...'},
-                    {'key': 'transfer_purpose', 'label': 'Цель передачи', 'type': 'select', 'required': True,
-                     'options': ['Продажа', 'Аренда', 'Хранение', 'Ремонт', 'Другое']}
-                ]
-            },
-            
-            # 10. Завещание (прочее)
-            {
-                'name': 'Образец завещания имущества (с подназначением наследника)',
-                'category': 'Прочее',
-                'type': 'Прочее',
-                'word_count': 3734,
-                'description': 'Завещание с указанием основного и подназначенного наследника',
-                'fields': [
-                    {'key': 'testator_name', 'label': 'ФИО Завещателя', 'type': 'text', 'required': True},
-                    {'key': 'testator_passport', 'label': 'Паспортные данные Завещателя', 'type': 'text', 'required': True},
-                    {'key': 'testator_address', 'label': 'Адрес Завещателя', 'type': 'text', 'required': True},
-                    {'key': 'testator_birthdate', 'label': 'Дата рождения Завещателя', 'type': 'date', 'required': True},
-                    {'key': 'notary_name', 'label': 'ФИО нотариуса', 'type': 'text', 'required': True},
-                    {'key': 'notary_office', 'label': 'Нотариальная контора', 'type': 'text', 'required': True},
-                    {'key': 'main_heir_name', 'label': 'ФИО основного наследника', 'type': 'text', 'required': True},
-                    {'key': 'main_heir_relation', 'label': 'Отношение к Завещателю', 'type': 'text', 'required': True, 'placeholder': 'сын, дочь, супруг(а)'},
-                    {'key': 'substitute_heir_name', 'label': 'ФИО подназначенного наследника', 'type': 'text', 'required': False},
-                    {'key': 'property_description', 'label': 'Описание завещаемого имущества', 'type': 'textarea', 'required': True,
-                     'placeholder': 'Квартира, расположенная по адресу... Автомобиль марки... Денежные средства...'},
-                    {'key': 'special_conditions', 'label': 'Особые условия', 'type': 'textarea', 'required': False,
-                     'placeholder': 'Имущество не подлежит разделу... Наследник обязуется...'},
-                    {'key': 'execution_date', 'label': 'Дата составления завещания', 'type': 'date', 'required': True}
-                ]
-            }
-        ]
-        
-        added_count = 0
-        for template in templates_data:
-            try:
-                cursor = conn.execute('''
-                    INSERT INTO templates (category_id, name, description, doc_type, word_count)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (category_ids[template['category']], template['name'], 
-                      template.get('description', ''), template['type'], template['word_count']))
-                
-                template_id = cursor.lastrowid
-                added_count += 1
-                
-                for i, field in enumerate(template['fields']):
-                    options_json = json.dumps(field.get('options', [])) if 'options' in field else None
-                    conn.execute('''
-                        INSERT INTO template_fields (template_id, field_key, field_label, field_type, 
-                                                     is_required, options, placeholder, min_value, max_value, order_index)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (template_id, field['key'], field['label'], field['type'], 
-                          field.get('required', False), options_json, field.get('placeholder'),
-                          field.get('min'), field.get('max'), i))
-                
-            except Exception as e:
-                print(f"Ошибка при добавлении шаблона '{template['name']}': {str(e)}")
-                continue
-        
-        conn.commit()
-        conn.close()
+        }
         
         return jsonify({
             'success': True,
-            'message': f'База данных успешно заполнена! Добавлено {added_count} шаблонов.',
-            'templates_added': added_count,
-            'templates_list': [t['name'] for t in templates_data[:added_count]]
+            'stats': stats,
+            'last_updated': datetime.now().isoformat()
         })
         
     except Exception as e:
-        return jsonify({'error': f'Ошибка при заполнении базы данных: {str(e)}'}), 500
-    
+        return jsonify({'error': f'Ошибка получения статистики: {str(e)}'}), 500
+
+
+@app.route('/api/user/profile', methods=['GET'])
+@login_required
+def get_user_profile():
+    """Получить профиль текущего пользователя"""
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Пользователь не найден'}), 404
+        
+        db = get_db()
+        
+        # Получаем дополнительную информацию о пользователе
+        user_info = db.execute('''
+            SELECT created_at, last_login 
+            FROM users 
+            WHERE id = ?
+        ''', (user['id'],)).fetchone()
+        
+        # Получаем статистику пользователя
+        user_stats = db.execute('''
+            SELECT 
+                COUNT(DISTINCT fd.id) as total_documents,
+                COUNT(DISTINCT fd.template_id) as used_templates,
+                MIN(fd.created_at) as first_document_date,
+                MAX(fd.created_at) as last_document_date
+            FROM filled_documents fd
+            WHERE fd.user_id = ?
+        ''', (user['id'],)).fetchone()
+        
+        profile_data = {
+            'id': user['id'],
+            'email': user['email'],
+            'username': user['username'],
+            'full_name': user['full_name'],
+            'created_at': user_info['created_at'],
+            'last_login': user_info['last_login'],
+            'stats': {
+                'total_documents': user_stats['total_documents'] or 0,
+                'used_templates': user_stats['used_templates'] or 0,
+                'first_document_date': user_stats['first_document_date'],
+                'last_document_date': user_stats['last_document_date']
+            }
+        }
+        
+        return jsonify({
+            'success': True,
+            'profile': profile_data
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Ошибка получения профиля: {str(e)}'}), 500
+
+
+@app.route('/api/user/profile', methods=['PUT'])
+@login_required
+def update_user_profile():
+    """Обновить профиль пользователя"""
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Пользователь не найден'}), 404
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Нет данных для обновления'}), 400
+        
+        full_name = data.get('full_name', '').strip()
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip().lower()
+        
+        if not username or not email:
+            return jsonify({'error': 'Имя пользователя и email обязательны'}), 400
+        
+        db = get_db()
+        
+        try:
+            db.execute('BEGIN TRANSACTION')
+            
+            # Проверяем, не занят ли email другим пользователем
+            if email != user['email']:
+                existing_user = db.execute(
+                    'SELECT id FROM users WHERE email = ? AND id != ?',
+                    (email, user['id'])
+                ).fetchone()
+                
+                if existing_user:
+                    db.rollback()
+                    return jsonify({'error': 'Этот email уже используется другим пользователем'}), 400
+            
+            # Проверяем, не занято ли имя пользователя
+            if username != user['username']:
+                existing_user = db.execute(
+                    'SELECT id FROM users WHERE username = ? AND id != ?',
+                    (username, user['id'])
+                ).fetchone()
+                
+                if existing_user:
+                    db.rollback()
+                    return jsonify({'error': 'Это имя пользователя уже занято'}), 400
+            
+            db.execute('''
+                UPDATE users 
+                SET full_name = ?, username = ?, email = ?
+                WHERE id = ?
+            ''', (full_name, username, email, user['id']))
+            
+            db.commit()
+            
+            # Получаем обновленные данные
+            updated_user = db.execute('''
+                SELECT id, email, username, full_name 
+                FROM users 
+                WHERE id = ?
+            ''', (user['id'],)).fetchone()
+            
+            return jsonify({
+                'success': True,
+                'message': 'Профиль успешно обновлен',
+                'user': {
+                    'id': updated_user['id'],
+                    'email': updated_user['email'],
+                    'username': updated_user['username'],
+                    'full_name': updated_user['full_name']
+                }
+            })
+            
+        except Exception as e:
+            db.rollback()
+            return jsonify({'error': f'Ошибка базы данных: {str(e)}'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Ошибка обновления профиля: {str(e)}'}), 500
+
+
+@app.route('/api/user/change-password', methods=['POST'])
+@login_required
+def change_password():
+    """Изменение пароля пользователя"""
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Пользователь не найден'}), 404
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Нет данных'}), 400
+        
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+        
+        if not current_password or not new_password:
+            return jsonify({'error': 'Требуется текущий и новый пароль'}), 400
+        
+        if len(new_password) < 6:
+            return jsonify({'error': 'Новый пароль должен содержать минимум 6 символов'}), 400
+        
+        db = get_db()
+        
+        # Получаем текущий хеш пароля
+        user_data = db.execute(
+            'SELECT password_hash FROM users WHERE id = ?', 
+            (user['id'],)
+        ).fetchone()
+        
+        if not user_data:
+            return jsonify({'error': 'Пользователь не найден'}), 404
+        
+        # Проверяем текущий пароль
+        if not verify_password(current_password, user_data['password_hash']):
+            return jsonify({'error': 'Текущий пароль неверен'}), 401
+        
+        # Хешируем новый пароль
+        new_password_hash = hash_password(new_password)
+        
+        # Обновляем пароль
+        db.execute(
+            'UPDATE users SET password_hash = ? WHERE id = ?',
+            (new_password_hash, user['id'])
+        )
+        db.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Пароль успешно изменен'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Ошибка изменения пароля: {str(e)}'}), 500
+
+
+@app.route('/api/user/delete', methods=['DELETE'])
+@login_required
+def delete_account():
+    """Удаление аккаунта пользователя"""
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Пользователь не найден'}), 404
+        
+        db = get_db()
+        
+        try:
+            db.execute('BEGIN TRANSACTION')
+            
+            # Удаляем все сессии пользователя
+            db.execute('DELETE FROM user_sessions WHERE user_id = ?', (user['id'],))
+            
+            # Удаляем все документы пользователя
+            db.execute('DELETE FROM filled_documents WHERE user_id = ?', (user['id'],))
+            
+            # Удаляем пользователя
+            db.execute('DELETE FROM users WHERE id = ?', (user['id'],))
+            
+            db.commit()
+            
+            response = jsonify({
+                'success': True,
+                'message': 'Аккаунт успешно удален'
+            })
+            
+            # Удаляем cookies
+            response.delete_cookie('user_id')
+            response.delete_cookie('token')
+            
+            return response
+            
+        except Exception as e:
+            db.rollback()
+            return jsonify({'error': f'Ошибка базы данных: {str(e)}'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Ошибка удаления аккаунта: {str(e)}'}), 500
+
+
+# ==================== ERROR HANDLERS ====================
+
+@app.errorhandler(404)
+def not_found(error):
+    """Обработчик 404 ошибки"""
+    return render_template('404.html'), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Обработчик 500 ошибки"""
+    return render_template('500.html'), 500
+
+
+# ==================== MAIN APPLICATION ====================
 
 if __name__ == '__main__':
-    init_database()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Инициализация базы данных
+    with app.app_context():
+        init_database()
+        cleanup_sessions()
+    
+    # Регистрируем очистку сессий при выходе
+    atexit.register(cleanup_sessions)
+    
+    # Запуск приложения
+    print("\n" + "="*50)
+    print("🚀 Document Generator запущен!")
+    print("📁 База данных: documents.db")
+    print("🌐 Веб-интерфейс: http://localhost:5000")
+    print("🔑 Администратор: test@example.com / test123")
+    print("🔑 Обычный пользователь: user@example.com / user123")
+    print("📊 Статистика: http://localhost:5000/stats")
+    print("👤 Профиль: http://localhost:5000/profile")
+    print("="*50 + "\n")
+    
+    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
