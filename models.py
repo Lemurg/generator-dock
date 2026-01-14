@@ -57,6 +57,8 @@ def init_database():
                 doc_type TEXT CHECK(doc_type IN ('Договор', 'Заявление', 'Исковое заявление', 'Соглашение', 'Расторжение', 'Акт', 'Доверенность', 'Приказ', 'Прочее')),
                 word_count INTEGER,
                 popularity INTEGER DEFAULT 0,
+                content_json TEXT,content_json TEXT,
+                content_text TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (category_id) REFERENCES categories (id)
             )
@@ -105,6 +107,16 @@ def init_database():
         db.execute('CREATE INDEX IF NOT EXISTS idx_templates_category ON templates(category_id)')
         db.execute('CREATE INDEX IF NOT EXISTS idx_template_fields_template ON template_fields(template_id)')
         
+       # Миграция: добавляем столбцы контента в templates, если их нет
+        existing_columns = {
+            row['name']
+            for row in db.execute("PRAGMA table_info(templates)").fetchall()
+        }
+        if 'content_json' not in existing_columns:
+            db.execute('ALTER TABLE templates ADD COLUMN content_json TEXT')
+        if 'content_text' not in existing_columns:
+            db.execute('ALTER TABLE templates ADD COLUMN content_text TEXT')
+
         db.commit()
         print("✓ Таблицы базы данных проверены/созданы")
         

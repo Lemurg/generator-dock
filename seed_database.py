@@ -70,6 +70,8 @@ def init_database():
             description TEXT,
             doc_type TEXT CHECK(doc_type IN ('Договор', 'Заявление', 'Исковое заявление', 'Соглашение', 'Расторжение', 'Акт', 'Доверенность', 'Приказ', 'Прочее')),
             word_count INTEGER,
+            content_json TEXT,
+            content_text TEXT,
             popularity INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (category_id) REFERENCES categories (id)
@@ -242,6 +244,27 @@ def seed_templates(category_ids):
     
     conn = sqlite3.connect(DATABASE)
     
+    def build_content_text(content_blocks):
+        lines = []
+        for block in content_blocks:
+            block_type = block.get('type')
+            if block_type == 'list':
+                lines.extend([f"- {item}" for item in block.get('items', [])])
+            elif block_type == 'signature':
+                left_label = block.get('left_label', '')
+                right_label = block.get('right_label', '')
+                left_name = block.get('left_name', '')
+                right_name = block.get('right_name', '')
+                lines.append(f"{left_label}: {left_name}".strip())
+                lines.append(f"{right_label}: {right_name}".strip())
+            elif block_type == 'spacer':
+                lines.append("")
+            else:
+                text = block.get('text', '')
+                if text:
+                    lines.append(text)
+        return "\n".join(lines).strip()
+
     templates_data = [
         # Договоры
         {
@@ -250,6 +273,39 @@ def seed_templates(category_ids):
             'type': 'Договор',
             'word_count': 149900,
             'description': 'Полный договор аренды квартиры с мебелью и техникой для длительной аренды',
+            'content': [
+                {'type': 'title', 'text': 'ДОГОВОР АРЕНДЫ КВАРТИРЫ'},
+                {'type': 'paragraph', 'text': 'г. ____________________'},
+                {'type': 'paragraph', 'text': '«__» __________ 20__ г.'},
+                {'type': 'paragraph', 'text': 'Арендодатель: {landlord_name}, далее именуемый(ая) «Арендодатель», с одной стороны, и Арендатор: {tenant_name}, далее именуемый(ая) «Арендатор», с другой стороны, заключили настоящий договор (далее — «Договор») о нижеследующем.'},
+                {'type': 'heading', 'text': '1. Предмет договора'},
+                {'type': 'paragraph', 'text': '1.1. Арендодатель передает, а Арендатор принимает во временное владение и пользование жилое помещение, расположенное по адресу: {address} (далее — «Квартира»).'},
+                {'type': 'paragraph', 'text': '1.2. Квартира предоставляется для проживания Арендатора и членов его семьи, с соблюдением правил эксплуатации жилых помещений.'},
+                {'type': 'paragraph', 'text': '1.3. Перечень мебели и бытовой техники, передаваемых вместе с Квартирой, фиксируется в акте приема-передачи и является неотъемлемой частью Договора.'},
+                {'type': 'heading', 'text': '2. Срок аренды'},
+                {'type': 'paragraph', 'text': '2.1. Срок аренды устанавливается с {start_date} по {end_date}.'},
+                {'type': 'paragraph', 'text': '2.2. Продление срока аренды возможно по соглашению сторон, оформляемому в письменной форме не позднее чем за 10 календарных дней до истечения срока аренды.'},
+                {'type': 'heading', 'text': '3. Арендная плата'},
+                {'type': 'paragraph', 'text': '3.1. Размер арендной платы составляет {rent_amount} руб. в месяц.'},
+                {'type': 'paragraph', 'text': '3.2. Арендная плата вносится ежемесячно не позднее 5-го числа каждого месяца на реквизиты, согласованные сторонами.'},
+                {'type': 'paragraph', 'text': '3.3. Коммунальные платежи оплачиваются Арендатором отдельно на основании счетов, выставленных ресурсоснабжающими организациями.'},
+                {'type': 'heading', 'text': '4. Права и обязанности сторон'},
+                {'type': 'list', 'items': [
+                    'Арендодатель обязуется передать Квартиру в состоянии, пригодном для проживания, и обеспечить доступ к инженерным коммуникациям.',
+                    'Арендодатель вправе проверять состояние Квартиры по предварительному уведомлению не позднее чем за 24 часа.',
+                    'Арендатор обязуется использовать Квартиру исключительно для проживания и соблюдать правила содержания жилого помещения.',
+                    'Арендатор обязуется своевременно оплачивать арендную плату и коммунальные услуги.',
+                    'Арендатор обязуется бережно относиться к имуществу и не проводить перепланировку без письменного согласия Арендодателя.'
+                ]},
+                {'type': 'heading', 'text': '5. Ответственность сторон'},
+                {'type': 'paragraph', 'text': '5.1. За нарушение сроков оплаты арендной платы Арендатор уплачивает неустойку в размере 0,1% от суммы задолженности за каждый день просрочки.'},
+                {'type': 'paragraph', 'text': '5.2. Стороны несут ответственность за неисполнение обязательств по Договору в соответствии с действующим законодательством РФ.'},
+                {'type': 'heading', 'text': '6. Заключительные положения'},
+                {'type': 'paragraph', 'text': '6.1. Все споры, возникающие из настоящего Договора, решаются путем переговоров, а при недостижении соглашения — в судебном порядке.'},
+                {'type': 'paragraph', 'text': '6.2. Договор составлен в двух экземплярах, имеющих одинаковую юридическую силу, по одному для каждой из сторон.'},
+                {'type': 'heading', 'text': '7. Подписи сторон'},
+                {'type': 'signature', 'left_label': 'Арендодатель', 'right_label': 'Арендатор', 'left_name': '{landlord_name}', 'right_name': '{tenant_name}'}
+            ],
             'fields': [
                 {'key': 'landlord_name', 'label': 'ФИО Арендодателя', 'type': 'text', 'required': True, 'placeholder': 'Иванов Иван Иванович'},
                 {'key': 'tenant_name', 'label': 'ФИО Арендатора', 'type': 'text', 'required': True, 'placeholder': 'Петров Петр Петрович'},
@@ -265,6 +321,31 @@ def seed_templates(category_ids):
             'type': 'Договор',
             'word_count': 20017,
             'description': 'Договор купли-продажи автомобиля между физическими лицами',
+            'content': [
+                {'type': 'title', 'text': 'ДОГОВОР КУПЛИ-ПРОДАЖИ ТРАНСПОРТНОГО СРЕДСТВА'},
+                {'type': 'paragraph', 'text': 'г. ____________________'},
+                {'type': 'paragraph', 'text': '«__» __________ 20__ г.'},
+                {'type': 'paragraph', 'text': 'Продавец: {seller_name}, и Покупатель: {buyer_name}, заключили настоящий договор (далее — «Договор») о нижеследующем.'},
+                {'type': 'heading', 'text': '1. Предмет договора'},
+                {'type': 'paragraph', 'text': '1.1. Продавец передает в собственность, а Покупатель принимает автомобиль {car_brand} {car_model}, год выпуска {car_year} (далее — «Автомобиль»).'},
+                {'type': 'paragraph', 'text': '1.2. Автомобиль передается в исправном состоянии, соответствует техническим требованиям и находится в собственности Продавца.'},
+                {'type': 'heading', 'text': '2. Цена и порядок расчетов'},
+                {'type': 'paragraph', 'text': '2.1. Цена Автомобиля составляет {price} руб.'},
+                {'type': 'paragraph', 'text': '2.2. Оплата производится в полном объеме в момент подписания Договора наличными либо путем перечисления на банковские реквизиты Продавца.'},
+                {'type': 'paragraph', 'text': '2.3. Факт оплаты подтверждается распиской Продавца.'},
+                {'type': 'heading', 'text': '3. Переход права собственности'},
+                {'type': 'paragraph', 'text': '3.1. Право собственности на Автомобиль переходит к Покупателю после подписания Договора и передачи Автомобиля вместе с комплектом ключей и документами.'},
+                {'type': 'heading', 'text': '4. Права и обязанности сторон'},
+                {'type': 'list', 'items': [
+                    'Продавец обязуется передать Автомобиль в согласованный срок и предоставить необходимые документы (ПТС, СТС).',
+                    'Покупатель обязуется принять Автомобиль и оплатить его стоимость в полном объеме.',
+                    'Стороны подтверждают отсутствие взаимных претензий после передачи Автомобиля.'
+                ]},
+                {'type': 'heading', 'text': '5. Заключительные положения'},
+                {'type': 'paragraph', 'text': '5.1. Договор составлен в двух экземплярах, имеющих одинаковую юридическую силу, по одному для каждой из сторон.'},
+                {'type': 'heading', 'text': '6. Подписи сторон'},
+                {'type': 'signature', 'left_label': 'Продавец', 'right_label': 'Покупатель', 'left_name': '{seller_name}', 'right_name': '{buyer_name}'}
+            ],
             'fields': [
                 {'key': 'seller_name', 'label': 'ФИО Продавца', 'type': 'text', 'required': True, 'placeholder': 'Сидоров Алексей Владимирович'},
                 {'key': 'buyer_name', 'label': 'ФИО Покупателя', 'type': 'text', 'required': True, 'placeholder': 'Кузнецов Дмитрий Сергеевич'},
@@ -281,6 +362,16 @@ def seed_templates(category_ids):
             'type': 'Заявление',
             'word_count': 15284,
             'description': 'Заявление на ежегодный оплачиваемый отпуск',
+            'content': [
+                {'type': 'paragraph', 'text': 'Кому: {to_director}'},
+                {'type': 'paragraph', 'text': 'От: {employee_name}, должность {position}'},
+                {'type': 'spacer'},
+                {'type': 'title', 'text': 'ЗАЯВЛЕНИЕ'},
+                {'type': 'paragraph', 'text': 'Прошу предоставить мне {vacation_type} отпуск сроком {vacation_days} календарных дней с {vacation_start}.'},
+                {'type': 'spacer'},
+                {'type': 'paragraph', 'text': 'Дата: ____________________'},
+                {'type': 'paragraph', 'text': 'Подпись: ____________________ {employee_name}'}
+            ],
             'fields': [
                 {'key': 'to_director', 'label': 'Кому (должность, ФИО)', 'type': 'text', 'required': True, 'placeholder': 'Генеральному директору ООО "Ромашка" Иванову И.И.'},
                 {'key': 'employee_name', 'label': 'От кого (ФИО сотрудника)', 'type': 'text', 'required': True, 'placeholder': 'Петрова Мария Сергеевна'},
@@ -297,6 +388,26 @@ def seed_templates(category_ids):
             'type': 'Исковое заявление',
             'word_count': 52892,
             'description': 'Исковое заявление о взыскании алиментов на несовершеннолетнего ребенка',
+            'content': [
+                {'type': 'paragraph', 'text': 'В {court_name}'},
+                {'type': 'paragraph', 'text': 'Истец: {plaintiff_name}'},
+                {'type': 'paragraph', 'text': 'Ответчик: {defendant_name}'},
+                {'type': 'spacer'},
+                {'type': 'title', 'text': 'ИСКОВОЕ ЗАЯВЛЕНИЕ'},
+                {'type': 'paragraph', 'text': 'Я, {plaintiff_name}, являюсь родителем несовершеннолетнего ребенка {child_name}, дата рождения {child_birthdate}.'},
+                {'type': 'paragraph', 'text': 'Ответчик {defendant_name} обязан(а) содержать ребенка, однако добровольно материальной помощи не оказывает.'},
+                {'type': 'paragraph', 'text': 'На основании статей 80–83 Семейного кодекса РФ прошу взыскать алименты на содержание ребенка в размере {alimony_amount}.'},
+                {'type': 'spacer'},
+                {'type': 'paragraph', 'text': 'Приложения:'},
+                {'type': 'list', 'items': [
+                    'Копия свидетельства о рождении ребенка.',
+                    'Копии документов, подтверждающих расходы на содержание ребенка.',
+                    'Копия искового заявления для ответчика.'
+                ]},
+                {'type': 'spacer'},
+                {'type': 'paragraph', 'text': 'Дата: ____________________'},
+                {'type': 'paragraph', 'text': 'Подпись: ____________________ {plaintiff_name}'}
+            ],
             'fields': [
                 {'key': 'court_name', 'label': 'Наименование суда', 'type': 'text', 'required': True, 'placeholder': 'Мировой суд судебного участка №1'},
                 {'key': 'plaintiff_name', 'label': 'ФИО Истца (получателя алиментов)', 'type': 'text', 'required': True},
@@ -313,6 +424,17 @@ def seed_templates(category_ids):
             'type': 'Доверенность',
             'word_count': 7894,
             'description': 'Доверенность на представление интересов компании в налоговой инспекции',
+            'content': [
+                {'type': 'title', 'text': 'ДОВЕРЕННОСТЬ'},
+                {'type': 'paragraph', 'text': 'г. ____________________'},
+                {'type': 'paragraph', 'text': '«__» __________ 20__ г.'},
+                {'type': 'paragraph', 'text': '{company_name} в лице {director_name} настоящей доверенностью уполномочивает {trustee_name} представлять интересы организации в {tax_office}.'},
+                {'type': 'paragraph', 'text': 'Полномочия включают подачу документов, получение справок и представление интересов в рамках компетенции налогового органа.'},
+                {'type': 'paragraph', 'text': 'Срок действия доверенности: {validity_period} месяцев.'},
+                {'type': 'paragraph', 'text': 'Доверенность выдана без права передоверия, если иное не указано письменно.'},
+                {'type': 'heading', 'text': 'Подписи'},
+                {'type': 'signature', 'left_label': 'Доверитель', 'right_label': 'Доверенное лицо', 'left_name': '{director_name}', 'right_name': '{trustee_name}'}
+            ],
             'fields': [
                 {'key': 'company_name', 'label': 'Наименование организации', 'type': 'text', 'required': True, 'placeholder': 'ООО "Вектор"'},
                 {'key': 'director_name', 'label': 'ФИО руководителя', 'type': 'text', 'required': True, 'placeholder': 'Генеральный директор Иванов И.И.'},
@@ -326,11 +448,14 @@ def seed_templates(category_ids):
     template_ids = {}
     
     for template in templates_data:
+        content_blocks = template.get('content', [])
+        content_json = json.dumps(content_blocks, ensure_ascii=False)
+        content_text = build_content_text(content_blocks)
         cursor = conn.execute('''
-            INSERT INTO templates (category_id, name, description, doc_type, word_count)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (category_ids[template['category']], template['name'], 
-              template['description'], template['type'], template['word_count']))
+            INSERT INTO templates (category_id, name, description, doc_type, word_count, content_json, content_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (category_ids[template['category']], template['name'],
+              template['description'], template['type'], template['word_count'], content_json, content_text))
         
         template_id = cursor.lastrowid
         template_ids[template['name']] = template_id

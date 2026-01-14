@@ -3,251 +3,200 @@
 """
 
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor
+from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
 import json
 from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional
 import io
+import re
 
 
-class SimpleWordDocumentGenerator:
-    """Простой генератор Word документов"""
-    
-    def __init__(self):
-        self.document = Document()
-    
-    def create_document(self, template_data, fields_data, document_name, user_info=None):
-        """
-        Создание Word документа
-        
-        Args:
-            template_data: данные шаблона
-            fields_data: заполненные поля
-            document_name: название документа
-            user_info: информация о пользователе
-        """
-        # Добавляем заголовок
-        title = self.document.add_heading(document_name, 0)
-        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        
-        # Добавляем информацию о шаблоне
-        if template_data.get('name'):
-            template_info = self.document.add_paragraph()
-            template_info.add_run('Шаблон: ').bold = True
-            template_info.add_run(template_data['name'])
-        
-        if template_data.get('category'):
-            category_info = self.document.add_paragraph()
-            category_info.add_run('Категория: ').bold = True
-            category_info.add_run(template_data['category'])
-        
-        # Информация о создании
-        creation_info = self.document.add_paragraph()
-        creation_info.add_run('Дата создания: ').bold = True
-        creation_info.add_run(datetime.now().strftime('%d.%m.%Y %H:%M'))
-        
-        if user_info:
-            user_line = self.document.add_paragraph()
-            user_line.add_run('Пользователь: ').bold = True
-            user_line.add_run(user_info.get('username', 'Неизвестно'))
-            if user_info.get('full_name'):
-                user_line.add_run(f" ({user_info['full_name']})")
-        
-        # Разделитель
-        self.document.add_paragraph()
-        self.document.add_paragraph('_' * 50)
-        self.document.add_paragraph()
-        
-        # Заголовок для заполненных данных
-        data_title = self.document.add_heading('Заполненные данные:', level=1)
-        
-        # Добавляем заполненные поля в виде таблицы
-        if fields_data:
-            table = self.document.add_table(rows=1, cols=2)
-            table.style = 'Light Shading'
-            
-            # Заголовки таблицы
-            hdr_cells = table.rows[0].cells
-            hdr_cells[0].text = 'Поле'
-            hdr_cells[1].text = 'Значение'
-            
-            # Делаем заголовки жирными
-            for cell in hdr_cells:
-                for paragraph in cell.paragraphs:
-                    for run in paragraph.runs:
-                        run.bold = True
-            
-            # Добавляем данные
-            for key, value in fields_data.items():
-                if value:  # Пропускаем пустые значения
-                    row_cells = table.add_row().cells
-                    row_cells[0].text = str(key)
-                    row_cells[1].text = str(value)
-        
-        # Добавляем сноску
-        self.document.add_page_break()
-        footnote = self.document.add_paragraph()
-        footnote.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        footnote.add_run('Документ сгенерирован автоматически с помощью Document Generator').italic = True
-        footnote.add_run('\n')
-        footnote.add_run(f'Дата создания: {datetime.now().strftime("%d.%m.%Y %H:%M")}').italic = True
-        
-        return self.document
-    
-    def get_document_bytes(self):
-        """Получение документа в виде байтов"""
-        output = io.BytesIO()
-        self.document.save(output)
-        output.seek(0)
-        return output.getvalue()
+GOST_FONT_NAME = "Times New Roman"
+GOST_FONT_SIZE = 14
+GOST_LINE_SPACING = 1.5
+GOST_FIRST_LINE_INDENT_CM = 1.25
 
 
-def generate_word_document(template_data, fields_data, document_name, user_info=None):
-    """
-    Функция для генерации Word документа
-    
-    Args:
-        template_data: данные шаблона
-        fields_data: заполненные поля
-        document_name: название документа
-        user_info: информация о пользователе
-    
-    Returns:
-        bytes: содержимое Word документа
-    """
-    try:
-        generator = SimpleWordDocumentGenerator()
-        generator.create_document(template_data, fields_data, document_name, user_info)
-        return generator.get_document_bytes()
-    except Exception as e:
-        # В случае ошибки создаем простейший документ
-        print(f"Ошибка генерации Word документа: {e}")
-        return create_fallback_document(document_name, fields_data)
+class SafeDict(dict):
+    """Словарь для безопасной подстановки значений в шаблон."""
+
+    def __missing__(self, key: str) -> str:
+        return ""
 
 
-def create_fallback_document(document_name, fields_data):
-    """Создание простого документа на случай ошибки"""
+def normalize_date(value: str) -> str:
+    """Преобразование даты в формат ДД.ММ.ГГГГ при возможности."""
+    match = re.match(r"(\d{4})-(\d{2})-(\d{2})", value)
+    if match:
+        year, month, day = match.groups()
+        return f"{day}.{month}.{year}"
+    return value
+
+
+def render_template_text(text: str, fields_data: Dict[str, Any]) -> str:
+    """Подстановка значений в текстовый шаблон."""
+    prepared = {}
+    for key, value in fields_data.items():
+        if value is None:
+            prepared[key] = ""
+        elif isinstance(value, str):
+            prepared[key] = normalize_date(value)
+        else:
+            prepared[key] = str(value)
+    return text.format_map(SafeDict(prepared)).strip()
+
+
+def apply_gost_styles(document: Document) -> None:
+    """Настройка полей и базового стиля по ГОСТ."""
+    section = document.sections[0]
+    section.top_margin = Cm(2)
+    section.bottom_margin = Cm(2)
+    section.left_margin = Cm(3)
+    section.right_margin = Cm(1.5)
+
+    style = document.styles["Normal"]
+    style.font.name = GOST_FONT_NAME
+    style.font.size = Pt(GOST_FONT_SIZE)
+
+
+def add_gost_paragraph(document: Document, text: str) -> None:
+    """Добавить абзац с ГОСТ-оформлением."""
+    paragraph = document.add_paragraph(text)
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    paragraph.paragraph_format.first_line_indent = Cm(GOST_FIRST_LINE_INDENT_CM)
+    paragraph.paragraph_format.line_spacing = GOST_LINE_SPACING
+
+
+def add_heading_paragraph(document: Document, text: str, center: bool = False) -> None:
+    """Добавить заголовок по ГОСТ."""
+    paragraph = document.add_paragraph(text)
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.LEFT
+    paragraph.paragraph_format.first_line_indent = Cm(0)
+    paragraph.paragraph_format.line_spacing = GOST_LINE_SPACING
+    for run in paragraph.runs:
+        run.bold = True
+
+
+def add_list_items(document: Document, items: Iterable[str]) -> None:
+    """Добавить нумерованный список."""
+    for index, item in enumerate(items, start=1):
+        paragraph = document.add_paragraph(f"{index}. {item}")
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        paragraph.paragraph_format.first_line_indent = Cm(0.5)
+        paragraph.paragraph_format.line_spacing = GOST_LINE_SPACING
+
+
+def add_signature_block(
+    document: Document,
+    left_label: str,
+    right_label: str,
+    left_name: str,
+    right_name: str,
+) -> None:
+    """Добавить блок подписей сторон."""
+    table = document.add_table(rows=2, cols=2)
+    table.autofit = True
+    table.cell(0, 0).text = left_label
+    table.cell(0, 1).text = right_label
+    table.cell(1, 0).text = f"__________________ {left_name}".strip()
+    table.cell(1, 1).text = f"__________________ {right_name}".strip()
+
+
+def build_document_from_structure(
+    document: Document,
+    structure: List[Dict[str, Any]],
+    fields_data: Dict[str, Any],
+) -> None:
+    """Сборка документа по структуре, сохраненной в БД."""
+    for block in structure:
+        block_type = block.get("type")
+        text = block.get("text", "")
+        rendered = render_template_text(text, fields_data) if text else ""
+
+        if block_type == "title":
+            add_heading_paragraph(document, rendered.upper(), center=True)
+        elif block_type == "heading":
+            add_heading_paragraph(document, rendered, center=False)
+        elif block_type == "paragraph":
+            if rendered:
+                add_gost_paragraph(document, rendered)
+        elif block_type == "list":
+            items = [
+                render_template_text(item, fields_data)
+                for item in block.get("items", [])
+            ]
+            add_list_items(document, [item for item in items if item])
+        elif block_type == "signature":
+            left_label = render_template_text(block.get("left_label", ""), fields_data)
+            right_label = render_template_text(block.get("right_label", ""), fields_data)
+            left_name = render_template_text(block.get("left_name", ""), fields_data)
+            right_name = render_template_text(block.get("right_name", ""), fields_data)
+            add_signature_block(
+                document,
+                left_label=left_label,
+                right_label=right_label,
+                left_name=left_name,
+                right_name=right_name,
+            )
+        elif block_type == "spacer":
+            document.add_paragraph()
+
+
+def create_fallback_document(document_name: str, fields_data: Dict[str, Any]) -> bytes:
+    """Создание простого документа на случай ошибки."""
     doc = Document()
-    
-    # Заголовок
-    title = doc.add_heading(document_name, 0)
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    # Дата
-    date_para = doc.add_paragraph()
-    date_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    date_para.add_run(f'Создано: {datetime.now().strftime("%d.%m.%Y %H:%M")}').italic = True
-    
-    # Разделитель
-    doc.add_paragraph()
-    doc.add_paragraph('=' * 50)
-    doc.add_paragraph()
-    
-    # Данные
-    doc.add_heading('Данные документа:', level=1)
-    
+    apply_gost_styles(doc)
+    add_heading_paragraph(doc, document_name, center=True)
+    add_gost_paragraph(
+        doc,
+        f"Документ создан автоматически {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+    )
     for key, value in fields_data.items():
         if value:
-            para = doc.add_paragraph()
-            para.add_run(f'{key}: ').bold = True
-            para.add_run(str(value))
-    
-    # Сохраняем в bytes
+            add_gost_paragraph(doc, f"{key}: {value}")
     output = io.BytesIO()
     doc.save(output)
     output.seek(0)
     return output.getvalue()
 
 
-def generate_contract_document(fields_data, document_name, user_info=None):
-    """
-    Генерация договора в формате Word
-    
-    Args:
-        fields_data: данные для заполнения договора
-        document_name: название документа
-        user_info: информация о пользователе
-    
-    Returns:
-        bytes: содержимое Word документа
-    """
-    doc = Document()
-    
-    # Заголовок
-    title = doc.add_heading('ДОГОВОР', 0)
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
-    # Номер и дата
-    if fields_data.get('contract_number'):
-        doc.add_paragraph(f"№ {fields_data['contract_number']}")
-    
-    if fields_data.get('contract_date'):
-        date_para = doc.add_paragraph(f"«{fields_data['contract_date']}» г.")
-        date_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    
-    # Разделитель
-    doc.add_paragraph()
-    
-    # 1. ПРЕДМЕТ ДОГОВОРА
-    doc.add_heading('1. ПРЕДМЕТ ДОГОВОРА', level=1)
-    
-    if fields_data.get('customer'):
-        doc.add_paragraph(f"Заказчик: {fields_data['customer']}")
-    
-    if fields_data.get('executor'):
-        doc.add_paragraph(f"Исполнитель: {fields_data['executor']}")
-    
-    if fields_data.get('subject'):
-        doc.add_paragraph(f"Предмет договора: {fields_data['subject']}")
-    
-    # 2. ОБЯЗАННОСТИ СТОРОН
-    doc.add_heading('2. ОБЯЗАННОСТИ СТОРОН', level=1)
-    
-    if fields_data.get('customer_obligations'):
-        doc.add_paragraph(f"2.1. Заказчик обязуется: {fields_data['customer_obligations']}")
-    
-    if fields_data.get('executor_obligations'):
-        doc.add_paragraph(f"2.2. Исполнитель обязуется: {fields_data['executor_obligations']}")
-    
-    # 3. СРОК ДЕЙСТВИЯ ДОГОВОРА
-    if fields_data.get('term'):
-        doc.add_heading('3. СРОК ДЕЙСТВИЯ ДОГОВОРА', level=1)
-        doc.add_paragraph(f"Договор действует: {fields_data['term']}")
-    
-    # 4. СТОИМОСТЬ И ПОРЯДОК РАСЧЕТОВ
-    if fields_data.get('price'):
-        doc.add_heading('4. СТОИМОСТЬ И ПОРЯДОК РАСЧЕТОВ', level=1)
-        doc.add_paragraph(f"Стоимость работ/услуг: {fields_data['price']}")
-    
-    # 5. ПОДПИСИ СТОРОН
-    doc.add_heading('5. ПОДПИСИ СТОРОН', level=1)
-    
-    doc.add_paragraph("ЗАКАЗЧИК:")
-    doc.add_paragraph("___________________________")
-    if fields_data.get('customer_position'):
-        doc.add_paragraph(f"Должность: {fields_data['customer_position']}")
-    if fields_data.get('customer_name'):
-        doc.add_paragraph(f"ФИО: {fields_data['customer_name']}")
-    
-    doc.add_paragraph()
-    doc.add_paragraph("ИСПОЛНИТЕЛЬ:")
-    doc.add_paragraph("___________________________")
-    if fields_data.get('executor_position'):
-        doc.add_paragraph(f"Должность: {fields_data['executor_position']}")
-    if fields_data.get('executor_name'):
-        doc.add_paragraph(f"ФИО: {fields_data['executor_name']}")
-    
-    # Сноска
-    doc.add_page_break()
-    footnote = doc.add_paragraph()
-    footnote.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footnote.add_run('Документ сгенерирован автоматически').italic = True
-    footnote.add_run('\n')
-    footnote.add_run(f'Дата: {datetime.now().strftime("%d.%m.%Y")}').italic = True
-    
-    # Сохраняем в bytes
-    output = io.BytesIO()
-    doc.save(output)
-    output.seek(0)
-    return output.getvalue()
+def generate_word_document(
+    template_data: Dict[str, Any],
+    fields_data: Dict[str, Any],
+    document_name: str,
+    user_info: Optional[Dict[str, Any]] = None,
+) -> bytes:
+    """Функция для генерации Word документа по структуре из БД."""
+    try:
+        document = Document()
+        apply_gost_styles(document)
+
+        structure_raw = template_data.get("content_json")
+        content_text = template_data.get("content_text")
+        if structure_raw:
+            structure = json.loads(structure_raw)
+        elif content_text:
+            structure = [
+                {"type": "paragraph", "text": line}
+                for line in content_text.splitlines()
+            ]
+        else:
+            structure = [
+                {"type": "title", "text": document_name},
+                {"type": "paragraph", "text": "Шаблон документа не содержит структуры."},
+            ]
+
+        if not any(block.get("type") == "title" for block in structure):
+            structure.insert(0, {"type": "title", "text": document_name})
+
+        build_document_from_structure(document, structure, fields_data)
+
+        output = io.BytesIO()
+        document.save(output)
+        output.seek(0)
+        return output.getvalue()
+    except Exception as exc:  # pragma: no cover - fallback
+        print(f"Ошибка генерации Word документа: {exc}")
+        return create_fallback_document(document_name, fields_data)

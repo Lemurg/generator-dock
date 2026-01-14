@@ -436,6 +436,15 @@ body {
     flex: 1;
 }
 
+.template-example {
+    color: #555;
+    font-size: 13px;
+    margin-bottom: 15px;
+    background: #f8f9fa;
+    padding: 8px 10px;
+    border-radius: 6px;
+}
+
 .template-meta {
     display: flex;
     justify-content: space-between;

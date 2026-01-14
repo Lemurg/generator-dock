@@ -7,9 +7,7 @@ from datetime import datetime
 from database import get_db, close_connection, get_current_user, hash_password, verify_password
 from models import init_database, cleanup_sessions
 from functools import wraps
-from word_generator import generate_word_document, generate_contract_document
-import urllib.parse
-import os
+from word_generator import generate_word_document
 import re
 
 app = Flask(__name__)
@@ -825,7 +823,9 @@ def download_document(document_id):
         
         # Ищем документ только текущего пользователя
         documents = db.execute('''
-            SELECT fd.*, t.name as template_name, t.description as template_description, c.name as category_name
+            SELECT fd.*, t.name as template_name, t.description as template_description,
+                   t.content_json as template_content_json, t.content_text as template_content_text,
+                   c.name as category_name
             FROM filled_documents fd
             JOIN templates t ON fd.template_id = t.id
             LEFT JOIN categories c ON t.category_id = c.id
@@ -849,7 +849,9 @@ def download_document(document_id):
                 'id': document['template_id'],
                 'name': document['template_name'],
                 'description': document['template_description'],
-                'category': document['category_name']
+                'category': document['category_name'],
+                'content_json': document['template_content_json'],
+                'content_text': document['template_content_text']
             }
             
             user_info = {
@@ -929,7 +931,9 @@ def download_word_document(document_id):
         
         # Ищем документ только текущего пользователя
         document = db.execute('''
-            SELECT fd.*, t.name as template_name, t.description as template_description, c.name as category_name
+            SELECT fd.*, t.name as template_name, t.description as template_description,
+                   t.content_json as template_content_json, t.content_text as template_content_text,
+                   c.name as category_name
             FROM filled_documents fd
             JOIN templates t ON fd.template_id = t.id
             LEFT JOIN categories c ON t.category_id = c.id
@@ -949,7 +953,9 @@ def download_word_document(document_id):
             'id': document['template_id'],
             'name': document['template_name'],
             'description': document['template_description'],
-            'category': document['category_name']
+            'category': document['category_name'],
+            'content_json': document['template_content_json'],
+            'content_text': document['template_content_text']
         }
         
         user_info = {
